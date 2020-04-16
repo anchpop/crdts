@@ -1,8 +1,7 @@
 use iced::{button, Application, Button, Column, Command, Element, Settings, Text};
 
-mod crdt;
-use crdt::CRDT;
-use crdt::CRDT::Semilattice;
+mod replicant;
+use replicant::Semilattice;
 
 
 #[derive(Default)]
@@ -59,7 +58,7 @@ impl Application for Counter {
                 self.value += 1;
             }
             Message::DecrementPressed => {
-                self.value -= 1;
+                self.value = if self.value > 0 { self.value - 1} else { self.value };
             }
         }
 
@@ -70,6 +69,6 @@ impl Application for Counter {
 
 fn main() {
     Counter::run(Settings::default());
-    let nat = CRDT::Nat { value: 3 };
-    println!("{}", CRDT::Nat::NAME);
+    let nat = replicant::Nat { value: 3 };
+    println!("{}", replicant::Nat::NAME);
 }
