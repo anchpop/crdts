@@ -20,12 +20,7 @@ pub trait CRDT: Clone {
 }
 
 
-/// Nat is a very simple CRDT.
-/// It represents a counter that can be increased (but never decreased).
-/// In the case of conflicts, the bigger counter is used.
-/// If the counter is initially 0, and I increase it by one, and you increase it by one,
-/// once we merge the combined counter will be 1. If you want the combined counter
-/// to be 2, you will need a more complex CRDT.
+/// Nat is a very simple CRDT. It is not yet idempotent and shouldn't be used
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Nat {
   pub value: u32,
