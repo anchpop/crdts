@@ -5,6 +5,12 @@ pub trait Semilattice: Clone {
 }
 
 
+/// Nat is a very simple CRDT.
+/// It represents a counter that can be increased (but never decreased).
+/// In the case of conflicts, the bigger counter is used.
+/// If the counter is initially 0, and I increase it by one, and you increase it by one,
+/// once we merge the combined counter will be 1. If you want the combined counter
+/// to be 2, you will need a more complex CRDT.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Nat {
   pub value: u32,
@@ -69,10 +75,12 @@ mod tests {
     
     #[test]
     fn commutative_many(vs1 in any::<Vec<u32>>()) {
-      let mut rng = StdRng::seed_from_u64 (0);
-      let mut vs2 = vs1.clone();
-      vs2.shuffle(&mut rng);
-      drop(rng);
+      let vs2 = {
+        let mut rng = StdRng::seed_from_u64 (0);
+        let mut vs2 = vs1.clone();
+        vs2.shuffle(&mut rng);
+        vs2
+      };
 
       let initial: Nat = Semilattice::default();
 
