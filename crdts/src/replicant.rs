@@ -1,6 +1,6 @@
 pub trait Semilattice: Clone {
+  /// This is the name of the CRDT, mostly for debugging/testing reasons.
   const NAME: &'static str;
-  fn default() -> Self;
   fn join(left: Self, right: Self) -> Self;
 }
 
@@ -16,13 +16,8 @@ pub struct Nat {
   pub value: u32,
 }
 
-
 impl Semilattice for Nat {
   const NAME: &'static str = "Nat";
-
-  fn default() -> Self {
-    return Nat { value: 0 };
-  }
 
   fn join(left: Self, right: Self) -> Self {
     Nat {
@@ -67,7 +62,7 @@ mod tests {
   proptest! {
     #[test]
     fn commutative_simple(v in any::<u32>()) {
-      let initial: Nat = Semilattice::default();
+      let initial = Nat::from(0);
       let incremented = initial.increment(v);
       prop_assert_eq!(Semilattice::join(initial, incremented), Semilattice::join(incremented, initial))
     }
@@ -82,7 +77,7 @@ mod tests {
         vs2
       };
 
-      let initial: Nat = Semilattice::default();
+      let initial = Nat::from(0);
 
       let try1 = vs1.into_iter().map(Nat::from).fold(initial, Semilattice::join);
       let try2 = vs2.into_iter().map(Nat::from).fold(initial, Semilattice::join);
