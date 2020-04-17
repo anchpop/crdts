@@ -1,7 +1,22 @@
-pub trait Semilattice: Clone {
+pub trait CRDT: Clone {
   /// This is the name of the CRDT, mostly for debugging/testing reasons.
   const NAME: &'static str;
-  fn join(left: Self, right: Self) -> Self;
+
+  /// This is the type that represents what operations can be done on your CRDT.
+  type Operation;
+
+  /// This is the function that makes it a CRDT! 
+  /// It needs to be order-insensitive and idempotent. 
+  /// Order-insensitive means that `a.apply(x).apply(z)` will be equal to `a.apply(z).apply(x)`.
+  /// Idempotent means that `a.apply(x)` will be equal to `a.apply(x).apply(x)`.
+  /// These two properties make it easy to sync the CRDT's state across the network. Even in a P2P way!
+  ///
+  /// How it works is simple. If you do an operation, you send it to all your peers. 
+  /// If anyone receives an operation they haven't seen before, they send it to all their peers.
+  /// Eventually, everyone will get your operation and can incorporate it into their state. 
+  /// This means that not everyone's states will be consistent all the time. This is okay because 
+  /// eventually they will become consistent. 
+  fn apply(self, op: Self::Operation) -> Self;
 }
 
 
@@ -16,21 +31,16 @@ pub struct Nat {
   pub value: u32,
 }
 
-impl Semilattice for Nat {
+impl CRDT for Nat {
   const NAME: &'static str = "Nat";
 
-  fn join(left: Self, right: Self) -> Self {
+  type Operation = u32;
+
+  fn apply(self, op: Self::Operation) -> Self {
     Nat {
-        value: std::cmp::max(left.value, right.value)
+        value: self.value.checked_add(op).unwrap_or(u32::MAX)
     }
   }
-}
-
-impl Nat {
-  fn increment(&self, v: u32) -> Self {
-    let newValue = self.value.checked_add(v).unwrap_or(u32::MAX);
-    Nat {value: newValue}
-  } 
 }
 
 impl From<u32> for Nat {
@@ -57,21 +67,14 @@ mod tests {
 
   use proptest::prelude::*;
 
-  use Semilattice;
+  use CRDT;
 
   proptest! {
-    #[test]
-    fn commutative_simple(v in any::<u32>()) {
-      let initial = Nat::from(0);
-      let incremented = initial.increment(v);
-      prop_assert_eq!(Semilattice::join(initial, incremented), Semilattice::join(incremented, initial))
-    }
 
-    
     #[test]
-    fn commutative_many(vs1 in any::<Vec<u32>>()) {
+    fn commutative(vs1 in any::<Vec<u32>>()) {
       let vs2 = {
-        let mut rng = StdRng::seed_from_u64 (0);
+        let mut rng = StdRng::seed_from_u64(0);
         let mut vs2 = vs1.clone();
         vs2.shuffle(&mut rng);
         vs2
@@ -79,8 +82,10 @@ mod tests {
 
       let initial = Nat::from(0);
 
-      let try1 = vs1.into_iter().map(Nat::from).fold(initial, Semilattice::join);
-      let try2 = vs2.into_iter().map(Nat::from).fold(initial, Semilattice::join);
+      let do_all = |vs: Vec<u32>| vs.into_iter().fold(initial, CRDT::apply);
+
+      let try1 = do_all(vs1);
+      let try2 = do_all(vs2);
 
       prop_assert_eq!(try1, try2)
     }

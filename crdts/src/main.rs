@@ -1,14 +1,9 @@
 mod replicant;
-use replicant::Semilattice;
+use replicant::{Nat, CRDT};
 
 
 
 
 fn main() {
-    let nat = replicant::Nat { value: 3 };
-
-
-
-
-    println!("{}", replicant::Nat::NAME);
+    println!("{}", Nat::NAME);
 }
