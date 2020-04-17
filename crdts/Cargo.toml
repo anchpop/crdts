@@ -8,5 +8,5 @@ edition = "2018"
 
 
 [dev-dependencies]
-quickcheck = "0.9"
-quickcheck_macros = "0.9"
+proptest = "0.9.4"
+rand = "0.7.3"
