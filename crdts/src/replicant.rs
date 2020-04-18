@@ -33,7 +33,7 @@ impl CRDT for Nat {
 
   fn apply(self, op: Self::Operation) -> Self {
     Nat {
-        value: self.value.checked_add(op).unwrap_or(u32::MAX)
+        value: self.value.checked_add(op).unwrap_or(std::u32::MAX)
     }
   }
 }
@@ -56,6 +56,7 @@ impl Into<u32> for Nat {
 #[cfg(test)]
 mod tests {  
   use super::*;
+  use rand::Rng;
   use rand::rngs::StdRng;
   use rand::SeedableRng;  
   use rand::seq::SliceRandom;
@@ -67,7 +68,7 @@ mod tests {
   proptest! {
 
     #[test]
-    fn commutative(vs1 in any::<Vec<u32>>()) {
+    fn order_insensitive(vs1 in any::<Vec<u32>>()) {
       let vs2 = {
         let mut rng = StdRng::seed_from_u64(0);
         let mut vs2 = vs1.clone();
@@ -85,5 +86,32 @@ mod tests {
       prop_assert_eq!(try1, try2)
     }
     
+    #[test]
+    fn idempotent(vs1 in any::<Vec<u32>>()) {
+      if vs1.len() > 0 {
+        let mut rng = StdRng::seed_from_u64(0);
+        let shuffled = {
+          let mut shuffled = vs1.clone();
+          shuffled.shuffle(&mut rng);
+          shuffled
+        };
+        let amt_to_repeat: usize = rng.gen_range(0, vs1.len());
+        let extended = {
+          let mut extended = vs1.clone();
+          extended.extend_from_slice(&shuffled[..amt_to_repeat]);
+          extended
+        };
+
+  
+        let initial = Nat::from(0);
+  
+        let do_all = |vs: Vec<u32>| vs.into_iter().fold(initial, CRDT::apply);
+  
+        let try1 = do_all(vs1);
+        let try2 = do_all(extended);
+  
+        prop_assert_eq!(try1, try2)
+      }
+    }
   }
 }

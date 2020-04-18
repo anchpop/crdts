@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 80419c1e94a695de93e0cef2d0456ec2573a4ac62c6629725e432b11764ac296 # shrinks to vs1 = [380363022, 3914604274]
+cc f31125ab8f32573da9bf66f776479971a4501aa9e14befc7bf8d331bf4623409 # shrinks to vs1 = [0, 0, 1]
