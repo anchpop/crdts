@@ -1,8 +1,10 @@
+use sodiumoxide::crypto::sign;
 use std::cmp::Ordering::*;
 use std::collections::HashMap;
 
 type Time = u32;
-type UserPubKey = u32;
+type UserPubKey = sign::ed25519::PublicKey;
+type UserSecKey = sign::ed25519::SecretKey;
 type Counter = u32;
 type Signature = u32;
 
@@ -23,6 +25,8 @@ struct OperationData<T> {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Account {
     user_pub_key: UserPubKey,
+    user_sec_key: UserSecKey,
+
     next_counter: Counter,
 }
 
@@ -106,10 +110,15 @@ impl<T: Applyable> CRDT<T> {
     }
 }
 
-fn create_crdt<T: Applyable>(applyable: T, user_pub_key: UserPubKey) -> CRDT<T> {
+fn create_crdt<T: Applyable>(
+    applyable: T,
+    user_pub_key: UserPubKey,
+    user_sec_key: UserSecKey,
+) -> CRDT<T> {
     CRDT {
         account: Account {
             user_pub_key,
+            user_sec_key,
             next_counter: 0,
         },
         state_vector: HashMap::new(),
@@ -211,7 +220,10 @@ mod tests {
 
         #[test]
         fn order_insensitive(vs1 in any::<Vec<u32>>()) {
+            let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
+
             let vs2 = {
+
                 let mut rng = StdRng::seed_from_u64(0);
                 let mut vs2 = vs1.clone();
                 vs2.shuffle(&mut rng);
@@ -219,7 +231,7 @@ mod tests {
             };
 
 
-            let initial = create_crdt(Nat::from(0), 0);
+            let initial = create_crdt(Nat::from(0), pk, sk);
 
             let do_all = |initial: CRDT<Nat>, vs: Vec<u32>| vs.into_iter().fold(initial, CRDT::apply_desc);
 
@@ -231,9 +243,11 @@ mod tests {
 
         #[test]
         fn idempotent(vs1 in any::<Vec<u32>>()) {
+            let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
+
             if vs1.len() > 0 {
                 let (initial, operations) = {
-                    let mut initial = create_crdt(Nat::from(0), 0);
+                    let mut initial = create_crdt(Nat::from(0), pk, sk);
 
                     let mut operations = vec![];
                     for desc in vs1 {
@@ -270,9 +284,11 @@ mod tests {
 
         #[test]
         fn idempotent_and_order_insensitive(vs1 in any::<Vec<u32>>()) {
+            let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
+
             if vs1.len() > 0 {
                 let (initial, operations) = {
-                    let mut initial = create_crdt(Nat::from(0), 0);
+                    let mut initial = create_crdt(Nat::from(0), pk, sk);
 
                     let mut operations = vec![];
                     for desc in vs1 {
