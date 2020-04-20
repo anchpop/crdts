@@ -127,13 +127,13 @@ pub trait Applyable: Clone + Default {
 
     /// This is the function that makes it a CRDT!
     /// It has but one restriction: it must be order-insensitive.
-    /// Order-insensitive means that `a.apply(x).apply(z)` will be equal to `a.apply(z).apply(x)`.
+    /// Order-insensitive means that `a.apply(x).apply(z) == a.apply(z).apply(x)`.
     ///
     /// If you're familiar with CRDTs, you might expect that the operation should also be
     /// Idempotent. Idempotent means that `a.apply(x)` will be equal to `a.apply(x).apply(x)`.
-    /// We actually implement idempotency automatically by annotating each operation with a unique
+    /// We actually implement idempotency for you by annotating each operation with a unique
     /// identifier. Before applying, we automatically check if we've already applied something
-    /// with the same identifer, and ignore it if so.
+    /// with the same identifer, and ignore it if so. That means you don't have to worry about it.
     ///
     /// These two properties, order-insensitivity and idempotency make it easy to sync the CRDT's
     /// state across the network. Even in a P2P way!
@@ -149,13 +149,13 @@ pub trait Applyable: Clone + Default {
     /// then actually use `apply` or `apply_desc`, which call it internally.
     ///
     /// You can depend on a user's action never getting applied to this function twice.
-    /// You can also depend on individual users' actions being applied to this function
-    /// in the same order they were performed. The order of operation for actions performed
-    /// by multiple users is not specified.
+    /// If you do an action, then another action, they will always be applied in that order. But if I
+    /// do an action and you do an action, the order of application isn't specified.
     fn apply_without_idempotency_check(self, op: Operation<Self::Description>) -> Self;
 }
 
-/// Nat is a very simple CRDT. I
+/// Nat is a very simple CRDT. It is just a number that can only go up. If I increment it and you increment it,
+/// when we merge the result will have been incremented twice.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Nat {
     pub value: u32,
