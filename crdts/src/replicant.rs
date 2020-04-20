@@ -1,6 +1,5 @@
 use std::cmp::Ordering::*;
 use std::collections::HashMap;
-use std::iter;
 
 type Time = u32;
 type UserPubKey = u32;
@@ -167,7 +166,7 @@ impl Applyable for Nat {
 
     type Description = u32;
 
-    fn applyWithoutIdempotencyCheck(self, op: Operation<Self::Description>) -> Self {
+    fn apply_without_idempotency_check(self, op: Operation<Self::Description>) -> Self {
         Nat {
             value: self
                 .value
