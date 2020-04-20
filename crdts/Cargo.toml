@@ -8,7 +8,7 @@ edition = "2018"
 
 [dependencies]
 typed-arena = "2.0.1"
-ring = "0.16.12"
+sodiumoxide = "0.2.5"
 
 [dev-dependencies]
 proptest = "0.9.4"

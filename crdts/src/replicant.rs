@@ -145,7 +145,13 @@ pub trait Applyable: Clone + Default {
     /// eventually they will become consistent.
     ///
     /// It's called `applyWithoutIdempotencyCheck` because this function shouldn't worry about that.
-    /// The `apply` function will take care of it for you.
+    /// The `apply` function will take care of it for you. You write `apply_without_idempotency_check`,
+    /// then actually use `apply` or `apply_desc`, which call it internally.
+    ///
+    /// You can depend on a user's action never getting applied to this function twice.
+    /// You can also depend on individual users' actions being applied to this function
+    /// in the same order they were performed. The order of operation for actions performed
+    /// by multiple users is not specified.
     fn apply_without_idempotency_check(self, op: Operation<Self::Description>) -> Self;
 }
 
@@ -205,12 +211,11 @@ mod tests {
 
         #[test]
         fn order_insensitive(vs1 in any::<Vec<u32>>()) {
-
             let vs2 = {
-            let mut rng = StdRng::seed_from_u64(0);
-            let mut vs2 = vs1.clone();
-            vs2.shuffle(&mut rng);
-            vs2
+                let mut rng = StdRng::seed_from_u64(0);
+                let mut vs2 = vs1.clone();
+                vs2.shuffle(&mut rng);
+                vs2
             };
 
 
@@ -252,6 +257,48 @@ mod tests {
                     extended.extend_from_slice(&shuffled[..amt_to_repeat]);
                     extended
                 };
+
+                let do_all = |i: CRDT<Nat>, vs: Vec<Operation<u32>>| vs.into_iter().fold(i, CRDT::apply);
+
+                let try1 = do_all(initial.clone(), operations);
+                let try2 = do_all(initial.clone(), extended);
+
+                prop_assert_eq!(try1, try2)
+            }
+        }
+
+
+        #[test]
+        fn idempotent_and_order_insensitive(vs1 in any::<Vec<u32>>()) {
+            if vs1.len() > 0 {
+                let (initial, operations) = {
+                    let mut initial = create_crdt(Nat::from(0), 0);
+
+                    let mut operations = vec![];
+                    for desc in vs1 {
+                        let (new, op) = initial.create_operation(desc);
+                        initial = new;
+                        operations.push(op);
+                    }
+                    (initial, operations)
+                };
+
+
+                let extended = {
+                    let mut rng = StdRng::seed_from_u64(0);
+                    let shuffled = {
+                        let mut shuffled = operations.clone();
+                        shuffled.shuffle(&mut rng);
+                        shuffled
+                    };
+                    let amt_to_repeat: usize = rng.gen_range(0, operations.len());
+                    let mut extended = operations.clone();
+                    extended.extend_from_slice(&shuffled[..amt_to_repeat]);
+                    extended.shuffle(&mut rng);
+                    extended
+                };
+
+
 
                 let do_all = |i: CRDT<Nat>, vs: Vec<Operation<u32>>| vs.into_iter().fold(i, CRDT::apply);
 
