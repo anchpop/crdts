@@ -1,8 +1,5 @@
 mod replicant;
-use replicant::{Nat, CRDT};
-
-
-
+use replicant::{Applyable, Nat};
 
 fn main() {
     println!("{}", Nat::NAME);
