@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use sodiumoxide::crypto::sign;
 use std::cmp::Ordering::*;
 use std::collections::HashMap;
@@ -6,23 +7,41 @@ type Time = u32;
 type UserPubKey = sign::ed25519::PublicKey;
 type UserSecKey = sign::ed25519::SecretKey;
 type Counter = u32;
-type Signature = u32;
+type Signature = sign::ed25519::Signature;
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Hash, Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Operation<T> {
     user_pub_key: UserPubKey,
-    data: OperationData<T>,
+    data: OperationSigned<T>,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Hash, Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+struct OperationSigned<T> {
+    signature: Signature,
+    payload: OperationData<T>,
+}
+
+#[derive(Hash, Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 struct OperationData<T> {
     counter: Counter,
     time: Time,
-    signature: Signature,
     value: T,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+impl<T: Serialize> OperationData<T> {
+    fn sign(&self, user_secret_key: &UserSecKey) -> Signature {
+        let encoded_payload = bincode::serialize(self).unwrap(); // @todo figure out why this is fallible in the first place
+        let signature = sign::sign_detached(&encoded_payload, user_secret_key);
+        signature
+    }
+
+    fn verifySig(&self, signature: &Signature, user_public_key: &UserPubKey) -> bool {
+        let encoded_payload = bincode::serialize(self).unwrap();
+        sign::verify_detached(&signature, &encoded_payload, user_public_key)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
 pub struct Account {
     user_pub_key: UserPubKey,
     user_sec_key: UserSecKey,
@@ -31,7 +50,7 @@ pub struct Account {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct CRDT<T: Applyable> {
+pub struct CRDT<T: Applyable + Serialize> {
     account: Account,
     // StateVector stores the counter value of the last performed operation for every user.
     // With it, we can check whether we've already applied any operation by comparing it's counter
@@ -41,76 +60,112 @@ pub struct CRDT<T: Applyable> {
     // ours, that means we somehow missed an operation. We'll put it in `notYetAppliedOperations` to
     // apply later in case turns up.
     state_vector: HashMap<UserPubKey, Counter>,
-    not_yet_applied_operations: HashMap<UserPubKey, Vec<OperationData<T::Description>>>,
+    not_yet_applied_operations:
+        HashMap<UserPubKey, HashMap<Counter, OperationSigned<T::Description>>>,
     value: T,
 }
 
-impl<T: Applyable> CRDT<T> {
+impl<T: Applyable + Serialize> CRDT<T> {
     fn apply_desc(self, desc: T::Description) -> Self {
         let (new_crdt, op) = self.create_operation(desc);
         new_crdt.apply(op)
     }
 
     fn apply(mut self, op: Operation<T::Description>) -> Self {
-        // @todo: sign operations and check signatures
         let user_pub_key = op.user_pub_key.clone();
-        let state_vector_counter = self.state_vector.entry(user_pub_key).or_insert(0);
-        let operations_to_attempt = self
-            .not_yet_applied_operations
-            .entry(user_pub_key)
-            .or_default();
-        operations_to_attempt.insert(0, op.data);
-        operations_to_attempt.sort();
 
-        let mut operations_cant_do_yet: Vec<OperationData<T::Description>> = vec![];
-        let mut current_value = self.value;
-        for op in operations_to_attempt.drain(..) {
-            match (op.counter).cmp(state_vector_counter) {
-                Less => {} // Do nothing
-                Greater => {
-                    // Store to be applied later
-                    operations_cant_do_yet.push(op);
-                }
-                Equal => {
-                    // Apply
-                    *state_vector_counter += 1;
-                    current_value = current_value.apply_without_idempotency_check(Operation {
-                        user_pub_key,
-                        data: op,
-                    });
+        // verify that the message is signed by the person who sent it
+        // (to make sure nobody is trying to impersonate them)
+        if op.data.payload.verifySig(&op.data.signature, &user_pub_key) {
+            // The state vector stores the counter of the next operation we expect from every user.
+            // Let's see what counter we expect for this user.
+            let state_vector_counter = self.state_vector.entry(user_pub_key).or_insert(0);
+
+            // Let's get the `not_yet_applied_operations` for this user.
+            let not_yet_applied_operations = self
+                .not_yet_applied_operations
+                .entry(user_pub_key)
+                .or_default();
+            // Now, we insert the operation we're currently working on.
+            not_yet_applied_operations.insert(op.data.payload.counter, op.data);
+
+            // `not_yet_applied_operations` is a hashmap to prevent us from adding two operations
+            // with the same counter. But now it would be convenient if it were a vector, so we
+            // could iterate over it in order.
+            let mut not_yet_applied_operations_ordered = not_yet_applied_operations
+                .drain()
+                .collect::<Vec<(Counter, OperationSigned<T::Description>)>>();
+            not_yet_applied_operations_ordered.sort();
+
+            // Any of the operations we can't do right now, we'll store in the hashmap `operations_cant_do_yet`
+            let mut operations_cant_do_yet: HashMap<Counter, OperationSigned<T::Description>> =
+                HashMap::new();
+
+            // As we iterate over `not_yet_applied_operations`, we are going to be applying the operations to our CRDT's
+            // value. It will "accumulate" the changes from all the operations we do, so let's call the current value the
+            // accumulator.
+            let mut accumulator = self.value;
+
+            // Finally - Iteration!
+            // If we get an operation who's counter is lower than the one in our state counter, we want to
+            // ignore it (it is a duplicate)
+            //
+            // If the operation's counter is the same, we want to apply it (and increment that user's
+            // counter in the state vector)
+            //
+            // If the operation's counter is greater, that means we're recieving that user's operations
+            // out of order, and need to store the operation to be applied in the future. We store this in
+            // `not_yet_applied_operations`.
+            for (counter, op) in not_yet_applied_operations_ordered {
+                match (counter).cmp(state_vector_counter) {
+                    Less => {}
+                    Greater => {
+                        operations_cant_do_yet.insert(counter, op);
+                    }
+                    Equal => {
+                        *state_vector_counter += 1;
+                        accumulator = accumulator.apply_without_idempotency_check(Operation {
+                            user_pub_key,
+                            data: op,
+                        });
+                    }
                 }
             }
-        }
-        *operations_to_attempt = operations_cant_do_yet;
-        CRDT {
-            value: current_value,
-            ..self
+            *not_yet_applied_operations = operations_cant_do_yet;
+            if *not_yet_applied_operations == HashMap::new() {
+                self.not_yet_applied_operations.remove(&user_pub_key);
+            }
+            CRDT {
+                value: accumulator,
+                ..self
+            }
+        } else {
+            todo!()
         }
     }
 
-    fn create_operation(self, desc: T::Description) -> (Self, Operation<T::Description>) {
+    fn create_operation(mut self, desc: T::Description) -> (Self, Operation<T::Description>) {
         let counter = self.account.next_counter;
-        let new_crdt = CRDT {
-            account: Account {
-                next_counter: counter + 1,
-                ..self.account
-            },
-            ..self
+        self.account.next_counter += 1;
+
+        let payload = OperationData {
+            counter,
+            time: 0, // @todo: record times
+            value: desc,
         };
+
         let op = Operation {
-            user_pub_key: new_crdt.account.user_pub_key,
-            data: OperationData {
-                counter,
-                time: 0, // @todo: record times
-                signature: 0,
-                value: desc,
+            user_pub_key: self.account.user_pub_key,
+            data: OperationSigned {
+                signature: payload.sign(&self.account.user_sec_key),
+                payload,
             },
         };
-        (new_crdt, op)
+        (self, op)
     }
 }
 
-fn create_crdt<T: Applyable>(
+fn create_crdt<T: Applyable + Serialize>(
     applyable: T,
     user_pub_key: UserPubKey,
     user_sec_key: UserSecKey,
@@ -132,7 +187,7 @@ pub trait Applyable: Clone + Default {
     const NAME: &'static str;
 
     /// This is the type that represents what operations can be done on your CRDT.
-    type Description: Ord;
+    type Description: Ord + Serialize;
 
     /// This is the function that makes it a CRDT!
     /// It has but one restriction: it must be order-insensitive.
@@ -165,7 +220,7 @@ pub trait Applyable: Clone + Default {
 
 /// Nat is a very simple CRDT. It is just a number that can only go up. If I increment it and you increment it,
 /// when we merge the result will have been incremented twice.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Hash, Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Nat {
     pub value: u32,
 }
@@ -185,7 +240,7 @@ impl Applyable for Nat {
         Nat {
             value: self
                 .value
-                .checked_add(op.data.value)
+                .checked_add(op.data.payload.value)
                 .unwrap_or(std::u32::MAX),
         }
     }
@@ -238,7 +293,9 @@ mod tests {
             let try1 = do_all(initial.clone(), vs1);
             let try2 = do_all(initial.clone(), vs2);
 
-            prop_assert_eq!(try1, try2)
+            prop_assert_eq!(&try1.not_yet_applied_operations, &HashMap::new());
+            prop_assert_eq!(&try1, &try2);
+
         }
 
         #[test]
@@ -277,7 +334,8 @@ mod tests {
                 let try1 = do_all(initial.clone(), operations);
                 let try2 = do_all(initial.clone(), extended);
 
-                prop_assert_eq!(try1, try2)
+                prop_assert_eq!(&try1.not_yet_applied_operations, &HashMap::new());
+                prop_assert_eq!(&try1, &try2);
             }
         }
 
@@ -321,7 +379,8 @@ mod tests {
                 let try1 = do_all(initial.clone(), operations);
                 let try2 = do_all(initial.clone(), extended);
 
-                prop_assert_eq!(try1, try2)
+                prop_assert_eq!(&try1.not_yet_applied_operations, &HashMap::new());
+                prop_assert_eq!(&try1, &try2);
             }
         }
     }
