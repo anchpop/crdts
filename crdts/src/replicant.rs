@@ -49,7 +49,7 @@ impl<T: Applyable> CRDT<T> {
     }
 
     fn apply(mut self, op: Operation<T::Description>) -> Self {
-        // Todo: check signature
+        // @todo: sign operations and check signatures
         let user_pub_key = op.user_pub_key.clone();
         let state_vector_counter = self.state_vector.entry(user_pub_key).or_insert(0);
         let operations_to_attempt = self
@@ -71,7 +71,7 @@ impl<T: Applyable> CRDT<T> {
                 Equal => {
                     // Apply
                     *state_vector_counter += 1;
-                    current_value = current_value.applyWithoutIdempotencyCheck(Operation {
+                    current_value = current_value.apply_without_idempotency_check(Operation {
                         user_pub_key,
                         data: op,
                     });
@@ -98,7 +98,7 @@ impl<T: Applyable> CRDT<T> {
             user_pub_key: new_crdt.account.user_pub_key,
             data: OperationData {
                 counter,
-                time: 0, // TODO: Change
+                time: 0, // @todo: record times
                 signature: 0,
                 value: desc,
             },
@@ -147,7 +147,7 @@ pub trait Applyable: Clone + Default {
     ///
     /// It's called `applyWithoutIdempotencyCheck` because this function shouldn't worry about that.
     /// The `apply` function will take care of it for you.
-    fn applyWithoutIdempotencyCheck(self, op: Operation<Self::Description>) -> Self;
+    fn apply_without_idempotency_check(self, op: Operation<Self::Description>) -> Self;
 }
 
 /// Nat is a very simple CRDT. I
