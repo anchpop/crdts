@@ -9,6 +9,11 @@ type UserSecKey = sign::ed25519::SecretKey;
 type Counter = u32;
 type Signature = sign::ed25519::Signature;
 
+/// The `Operation` contains all the information needed to apply an operation to a CRDT.
+/// This includes a bunch of useful metadata like when it was created, proof of who created it,
+/// etc.
+///
+/// This is split into a couple different structs for ease of storage.  
 #[derive(Hash, Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Operation<T> {
     user_pub_key: UserPubKey,
@@ -28,6 +33,7 @@ struct OperationData<T> {
     value: T,
 }
 
+// Convenience functions for signing and verifying operations
 impl<T: Serialize> OperationData<T> {
     fn sign(&self, user_secret_key: &UserSecKey) -> Signature {
         let encoded_payload = bincode::serialize(self).unwrap(); // @todo figure out why this is fallible in the first place
@@ -35,7 +41,7 @@ impl<T: Serialize> OperationData<T> {
         signature
     }
 
-    fn verifySig(&self, signature: &Signature, user_public_key: &UserPubKey) -> bool {
+    fn verify_sig(&self, signature: &Signature, user_public_key: &UserPubKey) -> bool {
         let encoded_payload = bincode::serialize(self).unwrap();
         sign::verify_detached(&signature, &encoded_payload, user_public_key)
     }
@@ -66,17 +72,24 @@ pub struct CRDT<T: Applyable + Serialize> {
 }
 
 impl<T: Applyable + Serialize> CRDT<T> {
+    /// Applies an operation description to the CRDT.
+    /// This is the same as creating an operation from a description with `create_operation` then applying it with `apply`
     fn apply_desc(self, desc: T::Description) -> Self {
         let (new_crdt, op) = self.create_operation(desc);
         new_crdt.apply(op)
     }
 
+    /// Applies an operation to the CRDT, verifying the signature and checking to make sure it hasn't already been applied
     fn apply(mut self, op: Operation<T::Description>) -> Self {
         let user_pub_key = op.user_pub_key.clone();
 
         // verify that the message is signed by the person who sent it
         // (to make sure nobody is trying to impersonate them)
-        if op.data.payload.verifySig(&op.data.signature, &user_pub_key) {
+        if op
+            .data
+            .payload
+            .verify_sig(&op.data.signature, &user_pub_key)
+        {
             // The state vector stores the counter of the next operation we expect from every user.
             // Let's see what counter we expect for this user.
             let state_vector_counter = self.state_vector.entry(user_pub_key).or_insert(0);
@@ -106,22 +119,20 @@ impl<T: Applyable + Serialize> CRDT<T> {
             // accumulator.
             let mut accumulator = self.value;
 
-            // Finally - Iteration!
-            // If we get an operation who's counter is lower than the one in our state counter, we want to
-            // ignore it (it is a duplicate)
-            //
-            // If the operation's counter is the same, we want to apply it (and increment that user's
-            // counter in the state vector)
-            //
-            // If the operation's counter is greater, that means we're recieving that user's operations
-            // out of order, and need to store the operation to be applied in the future. We store this in
-            // `not_yet_applied_operations`.
+            // Finally - We iterate over all the operations we still want to do!
             for (counter, op) in not_yet_applied_operations_ordered {
                 match (counter).cmp(state_vector_counter) {
+                    // If we get an operation who's counter is lower than the one in our state counter, we want to
+                    // ignore it (it is a duplicate)
                     Less => {}
+                    // If the operation's counter is greater, that means we're recieving that user's operations
+                    // out of order, and need to store the operation to be applied in the future. We store this in
+                    // `operations_cant_do_yet` to be merged back into `not_yet_applied_operations` later.
                     Greater => {
                         operations_cant_do_yet.insert(counter, op);
                     }
+                    // If the operation's counter is the same, we want to apply it (and increment that user's
+                    // counter in the state vector)
                     Equal => {
                         *state_vector_counter += 1;
                         accumulator = accumulator.apply_without_idempotency_check(Operation {
@@ -131,10 +142,13 @@ impl<T: Applyable + Serialize> CRDT<T> {
                     }
                 }
             }
+            // Now we set `not_yet_applied_operations` to the `operations_cant_do_yet` list we've been building
             *not_yet_applied_operations = operations_cant_do_yet;
+            // ...but if it's empty let's just delete the entry from the hashmap to reduce clutter
             if *not_yet_applied_operations == HashMap::new() {
                 self.not_yet_applied_operations.remove(&user_pub_key);
             }
+            // Finally, we can return the accumulated CRDT!
             CRDT {
                 value: accumulator,
                 ..self
@@ -144,6 +158,7 @@ impl<T: Applyable + Serialize> CRDT<T> {
         }
     }
 
+    /// Takes a description and creates an operation
     fn create_operation(mut self, desc: T::Description) -> (Self, Operation<T::Description>) {
         let counter = self.account.next_counter;
         self.account.next_counter += 1;
