@@ -2,8 +2,9 @@ use serde::{Deserialize, Serialize};
 use sodiumoxide::crypto::sign;
 use std::cmp::Ordering::*;
 use std::collections::HashMap;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-type Time = u32;
+type Time = Duration;
 type UserPubKey = sign::ed25519::PublicKey;
 type UserSecKey = sign::ed25519::SecretKey;
 type Counter = u32;
@@ -165,7 +166,9 @@ impl<T: Applyable + Serialize> CRDT<T> {
 
         let payload = OperationData {
             counter,
-            time: 0, // @todo: record times
+            time: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("Time went backwards"),
             value: desc,
         };
 
@@ -290,10 +293,7 @@ mod tests {
 
         #[test]
         fn order_insensitive(vs1 in any::<Vec<u32>>()) {
-            let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
-
             let vs2 = {
-
                 let mut rng = StdRng::seed_from_u64(0);
                 let mut vs2 = vs1.clone();
                 vs2.shuffle(&mut rng);
@@ -301,6 +301,7 @@ mod tests {
             };
 
 
+            let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
             let initial = create_crdt(Nat::from(0), pk, sk);
 
             let do_all = |initial: CRDT<Nat>, vs: Vec<u32>| vs.into_iter().fold(initial, CRDT::apply_desc);
@@ -315,10 +316,10 @@ mod tests {
 
         #[test]
         fn idempotent(vs1 in any::<Vec<u32>>()) {
-            let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
 
             if vs1.len() > 0 {
                 let (initial, operations) = {
+                    let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
                     let mut initial = create_crdt(Nat::from(0), pk, sk);
 
                     let mut operations = vec![];
@@ -357,10 +358,10 @@ mod tests {
 
         #[test]
         fn idempotent_and_order_insensitive(vs1 in any::<Vec<u32>>()) {
-            let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
 
             if vs1.len() > 0 {
                 let (initial, operations) = {
+                    let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
                     let mut initial = create_crdt(Nat::from(0), pk, sk);
 
                     let mut operations = vec![];
