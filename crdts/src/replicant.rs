@@ -43,8 +43,7 @@ struct OperationData<T> {
 impl<T: Serialize> OperationCounted<T> {
     fn sign(&self, user_secret_key: &UserSecKey) -> Signature {
         let encoded_payload = bincode::serialize(self).unwrap(); // @todo figure out why this is fallible in the first place
-        let signature = sign::sign_detached(&encoded_payload, user_secret_key);
-        signature
+        sign::sign_detached(&encoded_payload, user_secret_key)
     }
 
     fn verify_sig(&self, signature: &Signature, user_public_key: &UserPubKey) -> bool {
@@ -74,8 +73,7 @@ pub struct CRDT<T: Applyable + Serialize> {
     state_vector: HashMap<UserPubKey, Counter>,
     not_yet_applied_operations:
         HashMap<UserPubKey, HashMap<Counter, OperationData<T::Description>>>,
-    newly_applied_operations:
-        HashMap<UserPubKey, HashMap<Counter, OperationSigned<T::Description>>>,
+    recently_created_and_applied_operations: HashMap<Counter, Operation<T::Description>>,
     value: T,
 }
 
@@ -84,12 +82,16 @@ impl<T: Applyable + Serialize> CRDT<T> {
     /// This is the same as creating an operation from a description with `create_operation` then applying it with `apply`
     fn apply_desc(self, desc: T::Description) -> Self {
         let (new_crdt, op) = self.create_operation(desc);
-        new_crdt.apply(op)
+        let mut new_crdt = new_crdt.apply(op.clone());
+        new_crdt
+            .recently_created_and_applied_operations
+            .insert(op.data.payload.counter, op);
+        new_crdt
     }
 
     /// Applies an operation to the CRDT, verifying the signature and checking to make sure it hasn't already been applied
     fn apply(mut self, op: Operation<T::Description>) -> Self {
-        let user_pub_key = op.user_pub_key.clone();
+        let user_pub_key = op.user_pub_key;
 
         // verify that the message is signed by the person who sent it
         // (to make sure nobody is trying to impersonate them)
@@ -144,7 +146,11 @@ impl<T: Applyable + Serialize> CRDT<T> {
                     // counter in the state vector)
                     Equal => {
                         *state_vector_counter += 1;
-                        accumulator = accumulator.apply_without_idempotency_check(op.value, user_pub_key, *state_vector_counter);
+                        accumulator = accumulator.apply_without_idempotency_check(
+                            op.value,
+                            user_pub_key,
+                            *state_vector_counter,
+                        );
                     }
                 }
             }
@@ -174,7 +180,7 @@ impl<T: Applyable + Serialize> CRDT<T> {
             time: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("Time went backwards"),
-            contents: OperationData {value: desc},
+            contents: OperationData { value: desc },
         };
 
         let op = Operation {
@@ -185,6 +191,11 @@ impl<T: Applyable + Serialize> CRDT<T> {
             },
         };
         (self, op)
+    }
+
+    fn flush(mut self) -> Self {
+        self.recently_created_and_applied_operations = HashMap::new();
+        self
     }
 }
 
@@ -201,7 +212,7 @@ fn create_crdt<T: Applyable + Serialize>(
         },
         state_vector: HashMap::new(),
         not_yet_applied_operations: HashMap::new(),
-        newly_applied_operations: HashMap::new(),
+        recently_created_and_applied_operations: HashMap::new(),
         value: applyable,
     }
 }
@@ -211,7 +222,7 @@ pub trait Applyable: Clone + Default {
     const NAME: &'static str;
 
     /// This is the type that represents what operations can be done on your CRDT.
-    type Description: Ord + Serialize;
+    type Description: Ord + Serialize + Clone;
 
     /// This is the function that makes it a CRDT!
     /// It has but one restriction: it must be order-insensitive.
@@ -239,7 +250,12 @@ pub trait Applyable: Clone + Default {
     /// You can depend on a user's action never getting applied to this function twice.
     /// If you do an action, then another action, they will always be applied in that order. But if I
     /// do an action and you do an action, the order of application isn't specified.
-    fn apply_without_idempotency_check(self, desc: Self::Description, user_pub_key: UserPubKey, counter: Counter) -> Self;
+    fn apply_without_idempotency_check(
+        self,
+        desc: Self::Description,
+        user_pub_key: UserPubKey,
+        counter: Counter,
+    ) -> Self;
 }
 
 /// Nat is a very simple CRDT. It is just a number that can only go up. If I increment it and you increment it,
@@ -260,12 +276,14 @@ impl Applyable for Nat {
 
     type Description = u32;
 
-    fn apply_without_idempotency_check(self, desc: Self::Description, _: UserPubKey, _: Counter) -> Self {
+    fn apply_without_idempotency_check(
+        self,
+        desc: Self::Description,
+        _: UserPubKey,
+        _: Counter,
+    ) -> Self {
         Nat {
-            value: self
-                .value
-                .checked_add(desc)
-                .unwrap_or(std::u32::MAX),
+            value: self.value.checked_add(desc).unwrap_or(std::u32::MAX),
         }
     }
 }
@@ -296,28 +314,41 @@ mod tests {
     use CRDT;
 
     proptest! {
-
         #[test]
         fn order_insensitive(vs1 in any::<Vec<u32>>()) {
-            let vs2 = {
-                let mut rng = StdRng::seed_from_u64(0);
-                let mut vs2 = vs1.clone();
-                vs2.shuffle(&mut rng);
-                vs2
-            };
+
+            if vs1.len() > 0 {
+                let (initial, operations) = {
+                    let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
+                    let mut initial = create_crdt(Nat::from(0), pk, sk);
+
+                    let mut operations = vec![];
+                    for desc in vs1 {
+                        let (new, op) = initial.create_operation(desc);
+                        initial = new;
+                        operations.push(op);
+                    }
+                    (initial, operations)
+                };
 
 
-            let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
-            let initial = create_crdt(Nat::from(0), pk, sk);
+                let shuffled = {
+                    let mut rng = StdRng::seed_from_u64(0);
+                    let mut shuffled = operations.clone();
+                    shuffled.shuffle(&mut rng);
+                    shuffled
+                };
 
-            let do_all = |initial: CRDT<Nat>, vs: Vec<u32>| vs.into_iter().fold(initial, CRDT::apply_desc);
 
-            let try1 = do_all(initial.clone(), vs1);
-            let try2 = do_all(initial.clone(), vs2);
 
-            prop_assert_eq!(&try1.not_yet_applied_operations, &HashMap::new());
-            prop_assert_eq!(&try1, &try2);
+                let do_all = |i: CRDT<Nat>, vs: Vec<Operation<u32>>| vs.into_iter().fold(i, CRDT::apply);
 
+                let try1 = do_all(initial.clone(), operations);
+                let try2 = do_all(initial.clone(), shuffled);
+
+                prop_assert_eq!(&try1.not_yet_applied_operations, &HashMap::new());
+                prop_assert_eq!(&try1, &try2);
+            }
         }
 
         #[test]
