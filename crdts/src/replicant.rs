@@ -24,18 +24,23 @@ pub struct Operation<T> {
 #[derive(Hash, Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 struct OperationSigned<T> {
     signature: Signature,
-    payload: OperationData<T>,
+    payload: OperationCounted<T>,
+}
+
+#[derive(Hash, Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+struct OperationCounted<T> {
+    counter: Counter,
+    time: Time,
+    contents: OperationData<T>,
 }
 
 #[derive(Hash, Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 struct OperationData<T> {
-    counter: Counter,
-    time: Time,
     value: T,
 }
 
 // Convenience functions for signing and verifying operations
-impl<T: Serialize> OperationData<T> {
+impl<T: Serialize> OperationCounted<T> {
     fn sign(&self, user_secret_key: &UserSecKey) -> Signature {
         let encoded_payload = bincode::serialize(self).unwrap(); // @todo figure out why this is fallible in the first place
         let signature = sign::sign_detached(&encoded_payload, user_secret_key);
@@ -68,6 +73,8 @@ pub struct CRDT<T: Applyable + Serialize> {
     // apply later in case turns up.
     state_vector: HashMap<UserPubKey, Counter>,
     not_yet_applied_operations:
+        HashMap<UserPubKey, HashMap<Counter, OperationData<T::Description>>>,
+    newly_applied_operations:
         HashMap<UserPubKey, HashMap<Counter, OperationSigned<T::Description>>>,
     value: T,
 }
@@ -101,18 +108,19 @@ impl<T: Applyable + Serialize> CRDT<T> {
                 .entry(user_pub_key)
                 .or_default();
             // Now, we insert the operation we're currently working on.
-            not_yet_applied_operations.insert(op.data.payload.counter, op.data);
+            // This is safe to do because at this point we've already checked the signature
+            not_yet_applied_operations.insert(op.data.payload.counter, op.data.payload.contents);
 
             // `not_yet_applied_operations` is a hashmap to prevent us from adding two operations
             // with the same counter. But now it would be convenient if it were a vector, so we
             // could iterate over it in order.
             let mut not_yet_applied_operations_ordered = not_yet_applied_operations
                 .drain()
-                .collect::<Vec<(Counter, OperationSigned<T::Description>)>>();
+                .collect::<Vec<(Counter, OperationData<T::Description>)>>();
             not_yet_applied_operations_ordered.sort();
 
             // Any of the operations we can't do right now, we'll store in the hashmap `operations_cant_do_yet`
-            let mut operations_cant_do_yet: HashMap<Counter, OperationSigned<T::Description>> =
+            let mut operations_cant_do_yet: HashMap<Counter, OperationData<T::Description>> =
                 HashMap::new();
 
             // As we iterate over `not_yet_applied_operations`, we are going to be applying the operations to our CRDT's
@@ -136,10 +144,7 @@ impl<T: Applyable + Serialize> CRDT<T> {
                     // counter in the state vector)
                     Equal => {
                         *state_vector_counter += 1;
-                        accumulator = accumulator.apply_without_idempotency_check(Operation {
-                            user_pub_key,
-                            data: op,
-                        });
+                        accumulator = accumulator.apply_without_idempotency_check(op.value, user_pub_key, *state_vector_counter);
                     }
                 }
             }
@@ -164,12 +169,12 @@ impl<T: Applyable + Serialize> CRDT<T> {
         let counter = self.account.next_counter;
         self.account.next_counter += 1;
 
-        let payload = OperationData {
+        let payload = OperationCounted {
             counter,
             time: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("Time went backwards"),
-            value: desc,
+            contents: OperationData {value: desc},
         };
 
         let op = Operation {
@@ -196,6 +201,7 @@ fn create_crdt<T: Applyable + Serialize>(
         },
         state_vector: HashMap::new(),
         not_yet_applied_operations: HashMap::new(),
+        newly_applied_operations: HashMap::new(),
         value: applyable,
     }
 }
@@ -233,7 +239,7 @@ pub trait Applyable: Clone + Default {
     /// You can depend on a user's action never getting applied to this function twice.
     /// If you do an action, then another action, they will always be applied in that order. But if I
     /// do an action and you do an action, the order of application isn't specified.
-    fn apply_without_idempotency_check(self, op: Operation<Self::Description>) -> Self;
+    fn apply_without_idempotency_check(self, desc: Self::Description, user_pub_key: UserPubKey, counter: Counter) -> Self;
 }
 
 /// Nat is a very simple CRDT. It is just a number that can only go up. If I increment it and you increment it,
@@ -254,11 +260,11 @@ impl Applyable for Nat {
 
     type Description = u32;
 
-    fn apply_without_idempotency_check(self, op: Operation<Self::Description>) -> Self {
+    fn apply_without_idempotency_check(self, desc: Self::Description, _: UserPubKey, _: Counter) -> Self {
         Nat {
             value: self
                 .value
-                .checked_add(op.data.payload.value)
+                .checked_add(desc)
                 .unwrap_or(std::u32::MAX),
         }
     }
