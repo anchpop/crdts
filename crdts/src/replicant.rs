@@ -9,6 +9,7 @@ type UserPubKey = sign::ed25519::PublicKey;
 type UserSecKey = sign::ed25519::SecretKey;
 type Counter = u32;
 type Signature = sign::ed25519::Signature;
+type Id = uuid::Uuid;
 
 /// The `Operation` contains all the information needed to apply an operation to a CRDT.
 /// This includes a bunch of useful metadata like when it was created, proof of who created it,
@@ -22,7 +23,7 @@ pub struct Operation<T> {
 }
 
 #[derive(Hash, Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
-struct OperationSigned<T> {
+struct OperationSigned<T> { // @todo: We also should be creating an "initial signature" which signs the CRDT's ID
     signature: Signature,
     payload: OperationCounted<T>,
 }
@@ -35,7 +36,7 @@ struct OperationCounted<T> {
 }
 
 #[derive(Hash, Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
-struct OperationData<T> {
+struct OperationData<T> { 
     value: T,
 }
 
@@ -62,6 +63,7 @@ pub struct Account {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct CRDT<T: Applyable + Serialize> {
+    id: Id, 
     account: Account,
     // StateVector stores the counter value of the last performed operation for every user.
     // With it, we can check whether we've already applied any operation by comparing it's counter
@@ -201,12 +203,16 @@ impl<T: Applyable + Serialize> CRDT<T> {
     }
 }
 
+fn get_random_id() -> Id { uuid::Uuid::new_v4() }
+
 fn create_crdt<T: Applyable + Serialize>(
     applyable: T,
     user_pub_key: UserPubKey,
     user_sec_key: UserSecKey,
+    id: Id
 ) -> CRDT<T> {
     CRDT {
+        id,
         account: Account {
             user_pub_key,
             user_sec_key,
@@ -215,7 +221,7 @@ fn create_crdt<T: Applyable + Serialize>(
         state_vector: HashMap::new(),
         not_yet_applied_operations: HashMap::new(),
         recently_created_and_applied_operations: HashMap::new(),
-        value: applyable,
+        value: applyable
     }
 }
 
@@ -321,7 +327,7 @@ mod tests {
         let vs1 = vec![1,2,3,4,5];
 
         let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
-        let initial = create_crdt(Nat::from(0), pk, sk);
+        let initial = create_crdt(Nat::from(0), pk, sk, get_random_id());
 
         let do_all = |i: CRDT<Nat>, vs: Vec<u32>| vs.into_iter().fold(i, CRDT::apply_desc);
 
@@ -336,7 +342,7 @@ mod tests {
             if vs1.len() > 0 {
                 let (initial, operations) = {
                     let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
-                    let mut initial = create_crdt(Nat::from(0), pk, sk);
+                    let mut initial = create_crdt(Nat::from(0), pk, sk, get_random_id());
 
                     let mut operations = vec![];
                     for desc in vs1 {
@@ -373,7 +379,7 @@ mod tests {
             if vs1.len() > 0 {
                 let (initial, operations) = {
                     let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
-                    let mut initial = create_crdt(Nat::from(0), pk, sk);
+                    let mut initial = create_crdt(Nat::from(0), pk, sk, get_random_id());
 
                     let mut operations = vec![];
                     for desc in vs1 {
@@ -415,7 +421,7 @@ mod tests {
             if vs1.len() > 0 {
                 let (initial, operations) = {
                     let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
-                    let mut initial = create_crdt(Nat::from(0), pk, sk);
+                    let mut initial = create_crdt(Nat::from(0), pk, sk, get_random_id());
 
                     let mut operations = vec![];
                     for desc in vs1 {

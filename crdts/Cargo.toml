@@ -11,6 +11,7 @@ typed-arena = "2.0.1"
 sodiumoxide = "0.2.5"
 bincode = "1.2.1"
 serde = { version = "1.0", features = ["derive"] }
+uuid = { version = "0.8", features = ["serde", "v4", "stdweb"] }
 
 [dev-dependencies]
 proptest = "0.9.4"
