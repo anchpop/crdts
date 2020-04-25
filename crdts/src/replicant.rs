@@ -193,9 +193,11 @@ impl<T: Applyable + Serialize> CRDT<T> {
         (self, op)
     }
 
-    fn flush(mut self) -> Self {
-        self.recently_created_and_applied_operations = HashMap::new();
-        self
+    fn flush(mut self) -> (Self, HashMap<Counter, Operation<T::Description>>) {
+        let mut output = HashMap::new();
+        std::mem::swap(&mut output, &mut self.recently_created_and_applied_operations);
+        //self.recently_created_and_applied_operations = HashMap::new();
+        (self, output)
     }
 }
 
