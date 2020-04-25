@@ -283,7 +283,7 @@ impl Applyable for Nat {
         _: Counter,
     ) -> Self {
         Nat {
-            value: self.value.checked_add(desc).unwrap_or(std::u32::MAX),
+            value: self.value.checked_add(desc).unwrap_or(u32::MAX),
         }
     }
 }
@@ -313,10 +313,24 @@ mod tests {
 
     use CRDT;
 
+
+    #[test]
+    fn basic_nat_test() {
+        let vs1 = vec![1,2,3,4,5];
+
+        let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
+        let initial = create_crdt(Nat::from(0), pk, sk);
+
+        let do_all = |i: CRDT<Nat>, vs: Vec<u32>| vs.into_iter().fold(i, CRDT::apply_desc);
+
+        let try1 = do_all(initial, vs1.clone());
+
+        assert_eq!(try1.value.value, vs1.iter().sum());
+    }
+
     proptest! {
         #[test]
         fn order_insensitive(vs1 in any::<Vec<u32>>()) {
-
             if vs1.len() > 0 {
                 let (initial, operations) = {
                     let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
