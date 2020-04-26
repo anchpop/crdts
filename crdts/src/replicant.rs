@@ -23,7 +23,8 @@ pub struct Operation<T> {
 }
 
 #[derive(Hash, Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
-struct OperationSigned<T> { // @todo: We also should be creating an "initial signature" which signs the CRDT's ID
+struct OperationSigned<T> {
+    // @todo: We also should be creating an "initial signature" which signs the CRDT's ID
     signature: Signature,
     payload: OperationCounted<T>,
 }
@@ -36,7 +37,7 @@ struct OperationCounted<T> {
 }
 
 #[derive(Hash, Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
-struct OperationData<T> { 
+struct OperationData<T> {
     value: T,
 }
 
@@ -63,7 +64,7 @@ pub struct Account {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct CRDT<T: Applyable + Serialize> {
-    id: Id, 
+    id: Id,
     account: Account,
     // StateVector stores the counter value of the last performed operation for every user.
     // With it, we can check whether we've already applied any operation by comparing it's counter
@@ -76,13 +77,13 @@ pub struct CRDT<T: Applyable + Serialize> {
     not_yet_applied_operations:
         HashMap<UserPubKey, HashMap<Counter, OperationData<T::Description>>>,
     recently_created_and_applied_operations: HashMap<Counter, Operation<T::Description>>,
-    value: T,
+    pub value: T,
 }
 
 impl<T: Applyable + Serialize> CRDT<T> {
     /// Applies an operation description to the CRDT.
     /// This is the same as creating an operation from a description with `create_operation` then applying it with `apply`
-    fn apply_desc(self, desc: T::Description) -> Self {
+    pub fn apply_desc(self, desc: T::Description) -> Self {
         let (new_crdt, op) = self.create_operation(desc);
         let mut new_crdt = new_crdt.apply(op.clone());
         new_crdt
@@ -197,19 +198,24 @@ impl<T: Applyable + Serialize> CRDT<T> {
 
     fn flush(mut self) -> (Self, HashMap<Counter, Operation<T::Description>>) {
         let mut output = HashMap::new();
-        std::mem::swap(&mut output, &mut self.recently_created_and_applied_operations);
+        std::mem::swap(
+            &mut output,
+            &mut self.recently_created_and_applied_operations,
+        );
         //self.recently_created_and_applied_operations = HashMap::new();
         (self, output)
     }
 }
 
-fn get_random_id() -> Id { uuid::Uuid::new_v4() }
+pub fn get_random_id() -> Id {
+    uuid::Uuid::new_v4()
+}
 
-fn create_crdt<T: Applyable + Serialize>(
+pub fn create_crdt<T: Applyable + Serialize>(
     applyable: T,
     user_pub_key: UserPubKey,
     user_sec_key: UserSecKey,
-    id: Id
+    id: Id,
 ) -> CRDT<T> {
     CRDT {
         id,
@@ -221,7 +227,7 @@ fn create_crdt<T: Applyable + Serialize>(
         state_vector: HashMap::new(),
         not_yet_applied_operations: HashMap::new(),
         recently_created_and_applied_operations: HashMap::new(),
-        value: applyable
+        value: applyable,
     }
 }
 
@@ -321,10 +327,9 @@ mod tests {
 
     use CRDT;
 
-
     #[test]
     fn basic_nat_test() {
-        let vs1 = vec![1,2,3,4,5];
+        let vs1 = vec![1, 2, 3, 4, 5];
 
         let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
         let initial = create_crdt(Nat::from(0), pk, sk, get_random_id());
