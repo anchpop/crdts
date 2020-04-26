@@ -297,7 +297,7 @@ impl Applyable for Nat {
         _: Counter,
     ) -> Self {
         Nat {
-            value: self.value.checked_add(desc).unwrap_or(u32::MAX),
+            value: self.value.saturating_add(desc),
         }
     }
 }

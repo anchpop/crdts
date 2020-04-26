@@ -1,4 +1,5 @@
 use directories::{BaseDirs, ProjectDirs, UserDirs};
+use serde::{Deserialize, Serialize};
 use sodiumoxide::crypto::sign;
 use std::io;
 use std::io::Write;
@@ -11,7 +12,8 @@ use ansi_term::Colour::Red;
 fn main() {
     let _ = ansi_term::enable_ansi_support();
 
-    let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
+    let (pk, sk) = get_keypair();
+
     let mut crdt = create_crdt(Nat::from(0), pk, sk, get_random_id());
 
     println!("Testing the {} CRDT", Nat::NAME);
@@ -31,4 +33,15 @@ fn main() {
             _ => break,
         }
     }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
+struct UserInfo {
+    public_key: sign::ed25519::PublicKey,
+    secret_key: sign::ed25519::SecretKey,
+}
+
+fn get_keypair() -> (sign::ed25519::PublicKey, sign::ed25519::SecretKey) {
+    let (pk, sk) = sign::gen_keypair();
+    (pk, sk)
 }
