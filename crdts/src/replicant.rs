@@ -5,11 +5,11 @@ use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 type Time = Duration;
-type UserPubKey = sign::ed25519::PublicKey;
-type UserSecKey = sign::ed25519::SecretKey;
+pub type UserPubKey = sign::ed25519::PublicKey;
+pub type UserSecKey = sign::ed25519::SecretKey;
 type Counter = u32;
 type Signature = sign::ed25519::Signature;
-type Id = uuid::Uuid;
+pub type Id = uuid::Uuid;
 
 /// The `Operation` contains all the information needed to apply an operation to a CRDT.
 /// This includes a bunch of useful metadata like when it was created, proof of who created it,
