@@ -1,6 +1,5 @@
-use directories::{BaseDirs, ProjectDirs, UserDirs};
+use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
-use serde_json::Result;
 use sodiumoxide::crypto::sign;
 use std::env;
 use std::fs;
@@ -10,7 +9,9 @@ use std::io::Read;
 use std::io::Write;
 
 mod replicant;
-use replicant::{create_crdt, get_random_id, Applyable, Id, Nat, UserPubKey, UserSecKey};
+use replicant::{
+    create_account, create_crdt, get_random_id, Applyable, Id, Nat, UserPubKey, UserSecKey,
+};
 
 use ansi_term::Colour::Red;
 
@@ -23,18 +24,19 @@ fn main() {
         let project_basedir_str = format!("{}/", project_name);
         let project_file_str = format!("{}.penny", project_name);
         let project_basedir = std::path::Path::new(&project_basedir_str);
-        let project_path =
-            project_basedir.join(std::path::Path::new(&project_file_str));
+        let project_path = project_basedir.join(std::path::Path::new(&project_file_str));
+
         match File::open(&project_path) {
             Ok(mut file) => {
                 let mut contents = String::new();
                 file.read_to_string(&mut contents).unwrap();
-                let root: ProjectRoot = serde_json::from_str(&contents).unwrap();
+                let _root: ProjectRoot = serde_json::from_str(&contents).unwrap();
                 // @todo: read the id and use it to create the CRDT
 
                 let UserInfo { pk, sk } = get_keypair();
+                let mut account = create_account(pk, sk);
 
-                let mut crdt = create_crdt(Nat::from(0), pk, sk, get_random_id());
+                let mut crdt = create_crdt(Nat::from(0), get_random_id());
 
                 println!("Testing the {} CRDT", Nat::NAME);
                 loop {
@@ -43,18 +45,18 @@ fn main() {
                         Red.paint(format!("{}", crdt.value.value))
                     );
                     print!("Increment: ");
-                    io::stdout().flush();
+                    io::stdout().flush().unwrap();
                     let mut increment = String::new();
                     io::stdin().read_line(&mut increment).unwrap();
                     match increment.trim().parse() {
                         Ok(increment) => {
-                            crdt = crdt.apply_desc(increment);
+                            crdt = crdt.apply_desc(&mut account, increment);
                         }
                         _ => break,
                     }
                 }
             }
-            Err(e) => {
+            Err(_) => {
                 print!(
                     "Couldn't open '{}'! Do you want to create it? ",
                     project_name
@@ -64,10 +66,11 @@ fn main() {
                 io::stdin().read_line(&mut contents).unwrap();
                 if contents.trim() == "y" {
                     let UserInfo { pk, sk } = get_keypair();
-                    let initial = create_crdt(Nat::from(0), pk, sk, get_random_id());
-                    let initial = serde_json::to_string(&initial);
-
-                    // @todo: use get_random_id() to create one and write a `UserInfo` with that in it.
+                    let _account = create_account(pk, sk);
+                    let initial = create_crdt(Nat::from(0), get_random_id());
+                    let initial = bincode::serialize(&initial)
+                        .expect("somehow there was a serialization error");
+                    println!("{:?}", initial);
                 }
             }
         }
@@ -88,6 +91,7 @@ struct ProjectRoot {
 }
 
 fn get_keypair() -> UserInfo {
+    // @todo: generate different keypairs for different directories
     if let Some(proj_dirs) = ProjectDirs::from("com", "PennySoftware", "Replicant") {
         let config_dir = proj_dirs.config_dir();
         fs::create_dir_all(config_dir).unwrap();

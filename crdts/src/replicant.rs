@@ -44,12 +44,14 @@ struct OperationData<T> {
 // Convenience functions for signing and verifying operations
 impl<T: Serialize> OperationCounted<T> {
     fn sign(&self, user_secret_key: &UserSecKey) -> Signature {
-        let encoded_payload = bincode::serialize(self).unwrap(); // @todo figure out why this is fallible in the first place
+        let encoded_payload =
+            bincode::serialize(self).expect("somehow there was a serialization error"); // @todo figure out why this is fallible in the first place
         sign::sign_detached(&encoded_payload, user_secret_key)
     }
 
     fn verify_sig(&self, signature: &Signature, user_public_key: &UserPubKey) -> bool {
-        let encoded_payload = bincode::serialize(self).unwrap();
+        let encoded_payload =
+            bincode::serialize(self).expect("somehow there was a serialization error");
         sign::verify_detached(&signature, &encoded_payload, user_public_key)
     }
 }
@@ -63,10 +65,8 @@ pub struct Account {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
-pub struct CRDT<T: Applyable>
-{
+pub struct CRDT<T: Applyable> {
     id: Id,
-    account: Account,
     // StateVector stores the counter value of the last performed operation for every user.
     // With it, we can check whether we've already applied any operation by comparing it's counter
     // value against the one in our state vector.
@@ -75,7 +75,10 @@ pub struct CRDT<T: Applyable>
     // ours, that means we somehow missed an operation. We'll put it in `notYetAppliedOperations` to
     // apply later in case turns up.
     state_vector: HashMap<UserPubKey, Counter>,
-    #[serde(bound(serialize = "T::Description: Serialize", deserialize = "T::Description: Deserialize<'de>"))]
+    #[serde(bound(
+        serialize = "T::Description: Serialize",
+        deserialize = "T::Description: Deserialize<'de>"
+    ))]
     not_yet_applied_operations:
         HashMap<UserPubKey, HashMap<Counter, OperationData<T::Description>>>,
     recently_created_and_applied_operations: HashMap<Counter, Operation<T::Description>>,
@@ -91,8 +94,8 @@ where
 {
     /// Applies an operation description to the CRDT.
     /// This is the same as creating an operation from a description with `create_operation` then applying it with `apply`
-    pub fn apply_desc(self, desc: T::Description) -> Self {
-        let (new_crdt, op) = self.create_operation(desc);
+    pub fn apply_desc(self, account: &mut Account, desc: T::Description) -> Self {
+        let (new_crdt, op) = self.create_operation(account, desc);
         let mut new_crdt = new_crdt.apply(op.clone());
         new_crdt
             .recently_created_and_applied_operations
@@ -182,9 +185,13 @@ where
     }
 
     /// Takes a description and creates an operation
-    fn create_operation(mut self, desc: T::Description) -> (Self, Operation<T::Description>) {
-        let counter = self.account.next_counter;
-        self.account.next_counter += 1;
+    fn create_operation(
+        self,
+        account: &mut Account,
+        desc: T::Description,
+    ) -> (Self, Operation<T::Description>) {
+        let counter = account.next_counter;
+        account.next_counter += 1;
 
         let payload = OperationCounted {
             counter,
@@ -195,9 +202,9 @@ where
         };
 
         let op = Operation {
-            user_pub_key: self.account.user_pub_key,
+            user_pub_key: account.user_pub_key,
             data: OperationSigned {
-                signature: payload.sign(&self.account.user_sec_key),
+                signature: payload.sign(&account.user_sec_key),
                 payload,
             },
         };
@@ -219,19 +226,17 @@ pub fn get_random_id() -> Id {
     uuid::Uuid::new_v4()
 }
 
-pub fn create_crdt<T: Applyable>(
-    applyable: T,
-    user_pub_key: UserPubKey,
-    user_sec_key: UserSecKey,
-    id: Id,
-) -> CRDT<T> {
+pub fn create_account(user_pub_key: UserPubKey, user_sec_key: UserSecKey) -> Account {
+    Account {
+        user_pub_key,
+        user_sec_key,
+        next_counter: 0,
+    }
+}
+
+pub fn create_crdt<T: Applyable>(applyable: T, id: Id) -> CRDT<T> {
     CRDT {
         id,
-        account: Account {
-            user_pub_key,
-            user_sec_key,
-            next_counter: 0,
-        },
         state_vector: HashMap::new(),
         not_yet_applied_operations: HashMap::new(),
         recently_created_and_applied_operations: HashMap::new(),
@@ -340,13 +345,17 @@ mod tests {
         let vs1 = vec![1, 2, 3, 4, 5];
 
         let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
-        let initial = create_crdt(Nat::from(0), pk, sk, get_random_id());
+        let mut account = create_account(pk, sk);
+        let initial = create_crdt(Nat::from(0), get_random_id());
 
-        let do_all = |i: CRDT<Nat>, vs: Vec<u32>| vs.into_iter().fold(i, CRDT::apply_desc);
+        let mut do_all = |i: CRDT<Nat>, vs: Vec<u32>| {
+            vs.into_iter()
+                .fold(i, |acc, desc| acc.apply_desc(&mut account, desc))
+        };
 
         let try1 = do_all(initial, vs1.clone());
 
-        assert_eq!(try1.value.value, vs1.iter().sum());
+        assert_eq!(try1.value.value, vs1.iter().sum::<u32>());
     }
 
     proptest! {
@@ -355,11 +364,12 @@ mod tests {
             if vs1.len() > 0 {
                 let (initial, operations) = {
                     let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
-                    let mut initial = create_crdt(Nat::from(0), pk, sk, get_random_id());
+                    let mut account = create_account(pk, sk);
+                    let mut initial = create_crdt(Nat::from(0), get_random_id());
 
                     let mut operations = vec![];
                     for desc in vs1 {
-                        let (new, op) = initial.create_operation(desc);
+                        let (new, op) = initial.create_operation(&mut account, desc);
                         initial = new;
                         operations.push(op);
                     }
@@ -392,11 +402,12 @@ mod tests {
             if vs1.len() > 0 {
                 let (initial, operations) = {
                     let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
-                    let mut initial = create_crdt(Nat::from(0), pk, sk, get_random_id());
+                    let mut account = create_account(pk, sk);
+                    let mut initial = create_crdt(Nat::from(0), get_random_id());
 
                     let mut operations = vec![];
                     for desc in vs1 {
-                        let (new, op) = initial.create_operation(desc);
+                        let (new, op) = initial.create_operation(&mut account, desc);
                         initial = new;
                         operations.push(op);
                     }
@@ -434,11 +445,12 @@ mod tests {
             if vs1.len() > 0 {
                 let (initial, operations) = {
                     let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
-                    let mut initial = create_crdt(Nat::from(0), pk, sk, get_random_id());
+                    let mut account = create_account(pk, sk);
+                    let mut initial = create_crdt(Nat::from(0), get_random_id());
 
                     let mut operations = vec![];
                     for desc in vs1 {
-                        let (new, op) = initial.create_operation(desc);
+                        let (new, op) = initial.create_operation(&mut account, desc);
                         initial = new;
                         operations.push(op);
                     }
