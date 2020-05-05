@@ -1,5 +1,6 @@
 use directories::{BaseDirs, ProjectDirs, UserDirs};
 use serde::{Deserialize, Serialize};
+use serde_json::Result;
 use sodiumoxide::crypto::sign;
 use std::env;
 use std::fs;
@@ -18,8 +19,12 @@ fn main() {
     let args: Vec<String> = env::args().collect();
 
     if args.len() >= 2 {
-        let project_name = format!("{}.penny", &args[1].clone());
-        let project_path = std::path::Path::new(&project_name);
+        let project_name: &str = &args[1];
+        let project_basedir_str = format!("{}/", project_name);
+        let project_file_str = format!("{}.penny", project_name);
+        let project_basedir = std::path::Path::new(&project_basedir_str);
+        let project_path =
+            project_basedir.join(std::path::Path::new(&project_file_str));
         match File::open(&project_path) {
             Ok(mut file) => {
                 let mut contents = String::new();
@@ -58,6 +63,10 @@ fn main() {
                 let mut contents = String::new();
                 io::stdin().read_line(&mut contents).unwrap();
                 if contents.trim() == "y" {
+                    let UserInfo { pk, sk } = get_keypair();
+                    let initial = create_crdt(Nat::from(0), pk, sk, get_random_id());
+                    let initial = serde_json::to_string(&initial);
+
                     // @todo: use get_random_id() to create one and write a `UserInfo` with that in it.
                 }
             }

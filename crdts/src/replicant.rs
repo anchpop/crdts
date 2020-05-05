@@ -62,8 +62,9 @@ pub struct Account {
     next_counter: Counter,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct CRDT<T: Applyable + Serialize> {
+#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
+pub struct CRDT<T: Applyable>
+{
     id: Id,
     account: Account,
     // StateVector stores the counter value of the last performed operation for every user.
@@ -74,13 +75,20 @@ pub struct CRDT<T: Applyable + Serialize> {
     // ours, that means we somehow missed an operation. We'll put it in `notYetAppliedOperations` to
     // apply later in case turns up.
     state_vector: HashMap<UserPubKey, Counter>,
+    #[serde(bound(serialize = "T::Description: Serialize", deserialize = "T::Description: Deserialize<'de>"))]
     not_yet_applied_operations:
         HashMap<UserPubKey, HashMap<Counter, OperationData<T::Description>>>,
     recently_created_and_applied_operations: HashMap<Counter, Operation<T::Description>>,
     pub value: T,
 }
 
-impl<T: Applyable + Serialize> CRDT<T> {
+impl<T> CRDT<T>
+where
+    T: Applyable,
+    T: Serialize,
+    T::Description: Serialize,
+    T::Description: Ord,
+{
     /// Applies an operation description to the CRDT.
     /// This is the same as creating an operation from a description with `create_operation` then applying it with `apply`
     pub fn apply_desc(self, desc: T::Description) -> Self {
@@ -211,7 +219,7 @@ pub fn get_random_id() -> Id {
     uuid::Uuid::new_v4()
 }
 
-pub fn create_crdt<T: Applyable + Serialize>(
+pub fn create_crdt<T: Applyable>(
     applyable: T,
     user_pub_key: UserPubKey,
     user_sec_key: UserSecKey,
@@ -231,12 +239,12 @@ pub fn create_crdt<T: Applyable + Serialize>(
     }
 }
 
-pub trait Applyable: Clone + Default {
+pub trait Applyable: Clone {
     /// This is the name of the CRDT, mostly for debugging/testing reasons.
     const NAME: &'static str;
 
     /// This is the type that represents what operations can be done on your CRDT.
-    type Description: Ord + Serialize + Clone;
+    type Description: Clone;
 
     /// This is the function that makes it a CRDT!
     /// It has but one restriction: it must be order-insensitive.
