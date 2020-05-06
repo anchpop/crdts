@@ -10,7 +10,8 @@ use std::io::Write;
 
 mod replicant;
 use replicant::{
-    create_account, create_crdt, get_random_id, Applyable, Id, Nat, UserPubKey, UserSecKey,
+    create_account, create_crdt, create_crdt_info, get_random_id, Applyable, CRDTInfo, Nat,
+    UserPubKey, UserSecKey,
 };
 
 use ansi_term::Colour::Red;
@@ -28,15 +29,16 @@ fn main() {
 
         match File::open(&project_path) {
             Ok(mut file) => {
-                let mut contents = String::new();
-                file.read_to_string(&mut contents).unwrap();
-                let _root: ProjectRoot = serde_json::from_str(&contents).unwrap();
+                println!("Looking for a project at {:?}.", project_path);
+                let mut contents = vec![];
+                file.read_to_end(&mut contents).unwrap();
+                let project_info: CRDTInfo<Nat> = bincode::deserialize(&contents).unwrap();
                 // @todo: read the id and use it to create the CRDT
 
                 let UserInfo { pk, sk } = get_keypair();
                 let mut account = create_account(pk, sk);
 
-                let mut crdt = create_crdt(Nat::from(0), get_random_id());
+                let mut crdt = create_crdt(project_info);
 
                 println!("Testing the {} CRDT", Nat::NAME);
                 loop {
@@ -58,7 +60,7 @@ fn main() {
             }
             Err(_) => {
                 print!(
-                    "Couldn't open '{}'! Do you want to create it? ",
+                    "Couldn't open '{}'! Do you want me to create it? ",
                     project_name
                 );
                 io::stdout().flush().unwrap();
@@ -67,10 +69,16 @@ fn main() {
                 if contents.trim() == "y" {
                     let UserInfo { pk, sk } = get_keypair();
                     let _account = create_account(pk, sk);
-                    let initial = create_crdt(Nat::from(0), get_random_id());
-                    let initial = bincode::serialize(&initial)
-                        .expect("somehow there was a serialization error");
-                    println!("{:?}", initial);
+                    let info: CRDTInfo<Nat> = create_crdt_info(Nat::from(0), get_random_id());
+                    let info =
+                        bincode::serialize(&info).expect("somehow there was a serialization error");
+                    let _test: CRDTInfo<Nat> = bincode::deserialize(&info).unwrap();
+                    fs::create_dir_all(project_basedir).unwrap();
+                    {
+                        let mut project_file = File::create(&project_path).unwrap();
+                        project_file.write_all(&info).unwrap();
+                    }
+                    println!("I created a new project at {:?}.", project_path);
                 }
             }
         }
@@ -83,11 +91,6 @@ fn main() {
 struct UserInfo {
     pk: UserPubKey,
     sk: UserSecKey,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
-struct ProjectRoot {
-    id: Id,
 }
 
 fn get_keypair() -> UserInfo {

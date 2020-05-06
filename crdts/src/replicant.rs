@@ -64,9 +64,15 @@ pub struct Account {
     next_counter: Counter,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
+pub struct CRDTInfo<T> {
+    id: Id,
+    initial_value: T,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
 pub struct CRDT<T: Applyable> {
-    id: Id,
+    info: CRDTInfo<T>,
     // StateVector stores the counter value of the last performed operation for every user.
     // With it, we can check whether we've already applied any operation by comparing it's counter
     // value against the one in our state vector.
@@ -234,13 +240,20 @@ pub fn create_account(user_pub_key: UserPubKey, user_sec_key: UserSecKey) -> Acc
     }
 }
 
-pub fn create_crdt<T: Applyable>(applyable: T, id: Id) -> CRDT<T> {
-    CRDT {
+pub fn create_crdt_info<T: Applyable>(applyable: T, id: Id) -> CRDTInfo<T> {
+    CRDTInfo {
         id,
+        initial_value: applyable,
+    }
+}
+
+pub fn create_crdt<T: Applyable>(info: CRDTInfo<T>) -> CRDT<T> {
+    CRDT {
         state_vector: HashMap::new(),
         not_yet_applied_operations: HashMap::new(),
         recently_created_and_applied_operations: HashMap::new(),
-        value: applyable,
+        value: info.initial_value.clone(),
+        info,
     }
 }
 
@@ -346,7 +359,7 @@ mod tests {
 
         let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
         let mut account = create_account(pk, sk);
-        let initial = create_crdt(Nat::from(0), get_random_id());
+        let initial = create_crdt(create_crdt_info(Nat::from(0), get_random_id()));
 
         let mut do_all = |i: CRDT<Nat>, vs: Vec<u32>| {
             vs.into_iter()
@@ -365,7 +378,7 @@ mod tests {
                 let (initial, operations) = {
                     let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
                     let mut account = create_account(pk, sk);
-                    let mut initial = create_crdt(Nat::from(0), get_random_id());
+                    let mut initial = create_crdt(create_crdt_info(Nat::from(0), get_random_id()));
 
                     let mut operations = vec![];
                     for desc in vs1 {
@@ -403,7 +416,7 @@ mod tests {
                 let (initial, operations) = {
                     let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
                     let mut account = create_account(pk, sk);
-                    let mut initial = create_crdt(Nat::from(0), get_random_id());
+                    let mut initial = create_crdt(create_crdt_info(Nat::from(0), get_random_id()));
 
                     let mut operations = vec![];
                     for desc in vs1 {
@@ -446,7 +459,7 @@ mod tests {
                 let (initial, operations) = {
                     let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
                     let mut account = create_account(pk, sk);
-                    let mut initial = create_crdt(Nat::from(0), get_random_id());
+                    let mut initial = create_crdt(create_crdt_info(Nat::from(0), get_random_id()));
 
                     let mut operations = vec![];
                     for desc in vs1 {
