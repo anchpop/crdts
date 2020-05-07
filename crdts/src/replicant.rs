@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use sodiumoxide::crypto::hash;
 use sodiumoxide::crypto::sign;
 use std::cmp::Ordering::*;
 use std::collections::HashMap;
@@ -8,7 +9,7 @@ type Time = Duration;
 pub type UserPubKey = sign::ed25519::PublicKey;
 pub type UserSecKey = sign::ed25519::SecretKey;
 type Counter = u32;
-type Signature = sign::ed25519::Signature;
+pub type Signature = sign::ed25519::Signature;
 pub type Id = uuid::Uuid;
 
 /// The `Operation` contains all the information needed to apply an operation to a CRDT.
