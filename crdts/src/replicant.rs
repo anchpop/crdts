@@ -5,10 +5,10 @@ use std::cmp::Ordering::*;
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-type Time = Duration;
+pub type Time = Duration;
 pub type UserPubKey = sign::ed25519::PublicKey;
 pub type UserSecKey = sign::ed25519::SecretKey;
-type Counter = u32;
+pub type Counter = u32;
 pub type Signature = sign::ed25519::Signature;
 pub type Id = uuid::Uuid;
 
@@ -19,7 +19,7 @@ pub type Id = uuid::Uuid;
 /// This is split into a couple different structs for ease of storage.  
 #[derive(Hash, Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Operation<T> {
-    user_pub_key: UserPubKey,
+    pub user_pub_key: UserPubKey,
     data: OperationSigned<T>,
 }
 
@@ -218,14 +218,14 @@ where
         (self, op)
     }
 
-    fn flush(mut self) -> (Self, HashMap<Counter, Operation<T::Description>>) {
+    pub fn flush(&mut self) -> HashMap<Counter, Operation<T::Description>> {
         let mut output = HashMap::new();
         std::mem::swap(
             &mut output,
             &mut self.recently_created_and_applied_operations,
         );
         //self.recently_created_and_applied_operations = HashMap::new();
-        (self, output)
+        output
     }
 }
 

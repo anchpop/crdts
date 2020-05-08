@@ -1,3 +1,4 @@
+use base64::{CharacterSet, Config};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use sodiumoxide::crypto::hash;
@@ -10,15 +11,20 @@ use std::fs::OpenOptions;
 use std::io;
 use std::io::Read;
 use std::io::Write;
+use std::path::Path;
 use std::path::PathBuf;
 
 mod replicant;
 use replicant::{
-    create_account, create_crdt, create_crdt_info, get_random_id, Applyable, CRDTInfo, Nat,
-    Signature, UserPubKey, UserSecKey,
+    create_account, create_crdt, create_crdt_info, get_random_id, Account, Applyable, CRDTInfo,
+    Counter, Nat, Operation, Signature, UserPubKey, UserSecKey, CRDT,
 };
 
 use ansi_term::Colour::Red;
+
+fn base64Config() -> Config {
+    Config::new(CharacterSet::UrlSafe, false)
+}
 
 fn main() {
     let _ = ansi_term::enable_ansi_support();
@@ -40,27 +46,12 @@ fn main() {
                 // @todo: read the id and use it to create the CRDT
 
                 let DirectoryLevelUserInfo { pk, sk, .. } = get_keypair(&pennyfile_dir);
-                let mut account = create_account(pk, sk);
+                let account = create_account(pk, sk);
 
-                let mut crdt = create_crdt(project_info);
+                let crdt = create_crdt(project_info);
 
                 println!("Testing the {} CRDT", Nat::NAME);
-                loop {
-                    println!(
-                        "Current value: {}",
-                        Red.paint(format!("{}", crdt.value.value))
-                    );
-                    print!("Increment: ");
-                    io::stdout().flush().unwrap();
-                    let mut increment = String::new();
-                    io::stdin().read_line(&mut increment).unwrap();
-                    match increment.trim().parse() {
-                        Ok(increment) => {
-                            crdt = crdt.apply_desc(&mut account, increment);
-                        }
-                        _ => break,
-                    }
-                }
+                run(crdt, account, project_basedir);
             }
             Err(_) => {
                 print!(
@@ -86,6 +77,55 @@ fn main() {
         }
     } else {
         println!("Input the name of the project");
+    }
+}
+
+fn run(mut crdt: CRDT<Nat>, mut account: Account, project_basedir: &Path) {
+    loop {
+        println!(
+            "Current value: {}",
+            Red.paint(format!("{}", crdt.value.value))
+        );
+        print!("Increment: ");
+        io::stdout().flush().unwrap();
+        let mut increment = String::new();
+        io::stdin().read_line(&mut increment).unwrap();
+        match increment.trim().parse() {
+            Ok(increment) => {
+                crdt = crdt.apply_desc(&mut account, increment);
+            }
+            _ => break,
+        }
+    }
+    write::<Nat>(crdt.flush(), project_basedir);
+}
+
+fn write<T>(mut operations: HashMap<Counter, Operation<T::Description>>, project_basedir: &Path)
+where
+    T: Applyable + Serialize,
+    T::Description: Serialize,
+{
+    for (counter, operation) in operations.drain() {
+        let toWriteDir = {
+            let relativeDir = format!(
+                "operations/{}",
+                base64::encode_config(operation.user_pub_key, base64Config())
+            );
+            project_basedir.join(std::path::Path::new(&relativeDir))
+        };
+        fs::create_dir_all(&toWriteDir).expect("Failed to create directory to store operations");
+        let toWriteFilePath =
+            toWriteDir.join(std::path::Path::new(&format!("{}.pennyop", counter)));
+        let mut file = OpenOptions::new()
+            .read(false)
+            .write(true)
+            .create(true)
+            .open(toWriteFilePath)
+            .unwrap();
+        file.write_all(
+            &bincode::serialize(&operation).expect("somehow there was a serialization error"),
+        )
+        .expect("Failed to write operation");
     }
 }
 
@@ -128,7 +168,7 @@ fn get_keypair(pennyfile_dir: &PathBuf) -> DirectoryLevelUserInfo {
             )
             .as_bytes();
         let pennyfile_dir_hash = hash::hash(pennyfile_dir_bytes);
-        base64::encode(pennyfile_dir_hash)
+        base64::encode_config(pennyfile_dir_hash, base64Config())
     };
 
     let mut keys = get_all_saved_keypairs();
