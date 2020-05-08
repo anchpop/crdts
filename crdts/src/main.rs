@@ -7,8 +7,7 @@ use sodiumoxide::crypto::sign;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::fs::File;
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::Read;
 use std::io::Write;
@@ -18,12 +17,12 @@ use std::path::PathBuf;
 mod replicant;
 use replicant::{
     create_account, create_crdt, create_crdt_info, get_random_id, Account, Applyable, CRDTInfo,
-    Counter, Nat, Operation, Signature, UserPubKey, UserSecKey, CRDT,
+    Counter, Nat, Operation, OperationSigned, Signature, UserPubKey, UserSecKey, CRDT,
 };
 
 use ansi_term::Colour::Red;
 
-fn base_64_config() -> Config {
+fn base64_config() -> Config {
     Config::new(CharacterSet::UrlSafe, false)
 }
 
@@ -44,12 +43,12 @@ fn main() {
                 let mut contents = vec![];
                 file.read_to_end(&mut contents).unwrap();
                 let project_info: CRDTInfo<Nat> = bincode::deserialize(&contents).unwrap();
-                // @todo: read the id and use it to create the CRDT
 
                 let DirectoryLevelUserInfo { pk, sk, .. } = get_keypair(&pennyfile_dir);
                 let account = create_account(pk, sk);
 
                 let crdt = create_crdt(project_info);
+                let crdt = restore_operations::<Nat>(crdt, project_basedir);
 
                 println!("Testing the {} CRDT", Nat::NAME);
                 run(crdt, account, project_basedir);
@@ -103,10 +102,86 @@ fn run(mut crdt: CRDT<Nat>, mut account: Account, project_basedir: &Path) {
 
 fn restore_operations<T>(crdt: CRDT<T>, project_basedir: &Path) -> CRDT<T>
 where
+    T: Applyable + Serialize + DeserializeOwned,
+    T::Description: Serialize + DeserializeOwned + Ord,
+{
+    let operation_dir = project_basedir.join("operations");
+    let mut all_operations: Vec<Operation<T::Description>> = vec![];
+    for user_entry in fs::read_dir(&operation_dir).expect(&format!(
+        "Trying to read the '{}' folder, but couldn't open it for whatever reason",
+        operation_dir.to_string_lossy()
+    )) {
+        let user_entry = user_entry.expect(&format!(
+            "ran into an error when reading an entry in the '{}' folder",
+            operation_dir.to_string_lossy()
+        ));
+
+        let path = user_entry.path();
+
+        if path.is_dir() {
+            all_operations.extend(get_operations_in_path::<T>(&path));
+        } else {
+            panic!(
+                "I only expected directories in {}, but I came across {}, which is a file!",
+                operation_dir.to_string_lossy(),
+                path.to_string_lossy()
+            );
+        }
+    }
+    all_operations.into_iter().fold(crdt, CRDT::apply)
+}
+
+fn get_operations_in_path<T>(base_path: &PathBuf) -> Vec<Operation<T::Description>>
+where
     T: Applyable + DeserializeOwned,
     T::Description: DeserializeOwned,
 {
-    todo!()
+    let user_pub_key: UserPubKey = {
+        let user_pub_key = base_path.components().into_iter().last().unwrap();
+        let user_pub_key = match user_pub_key {
+            std::path::Component::Normal(osstr) => osstr.to_string_lossy(),
+            _ => panic!(
+                "The last element of {} wasn't a normal part of a path",
+                base_path.to_string_lossy()
+            ),
+        };
+        let user_pub_key_decoded = base64::decode_config(user_pub_key.as_bytes(), base64_config())
+            .expect(&format!("{} couldn't be decoded as base64!", user_pub_key));
+
+        bincode::deserialize(&user_pub_key_decoded).expect(&format!(
+            "{} couldn't be converted to a valid public key!",
+            user_pub_key
+        ))
+    };
+
+    fs::read_dir(&base_path)
+        .expect(&format!(
+            "Trying to read the '{}' folder, but couldn't open it for whatever reason",
+            base_path.to_string_lossy()
+        ))
+        .map(|operation| {
+            let operation_signed: OperationSigned<T::Description> = {
+                let mut operation_bytes = vec![];
+                let operation_path = operation.unwrap().path();
+                let mut file = OpenOptions::new()
+                    .read(true)
+                    .write(false)
+                    .create(false)
+                    .open(&operation_path)
+                    .unwrap();
+                file.read_to_end(&mut operation_bytes).unwrap();
+                bincode::deserialize(&operation_bytes).expect(&format!(
+                    "The file at {} couldn't be decoded into a valid operation!",
+                    operation_path.to_string_lossy()
+                ))
+            };
+            let operation = Operation {
+                user_pub_key,
+                data: operation_signed,
+            };
+            operation
+        })
+        .collect()
 }
 
 fn save_operations<T>(
@@ -120,7 +195,10 @@ fn save_operations<T>(
         let to_write_dir = {
             let relative_dir = format!(
                 "operations/{}",
-                base64::encode_config(operation.user_pub_key, base_64_config())
+                base64::encode_config(
+                    bincode::serialize(&operation.user_pub_key).unwrap(),
+                    base64_config()
+                )
             );
             project_basedir.join(std::path::Path::new(&relative_dir))
         };
@@ -182,7 +260,7 @@ fn get_keypair(pennyfile_dir: &PathBuf) -> DirectoryLevelUserInfo {
             )
             .as_bytes();
         let pennyfile_dir_hash = hash::hash(pennyfile_dir_bytes);
-        base64::encode_config(pennyfile_dir_hash, base_64_config())
+        base64::encode_config(pennyfile_dir_hash, base64_config())
     };
 
     let mut keys = get_all_saved_keypairs();

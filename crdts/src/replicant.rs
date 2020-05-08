@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use sodiumoxide::crypto::hash;
 use sodiumoxide::crypto::sign;
 use std::cmp::Ordering::*;
 use std::collections::HashMap;
@@ -110,7 +109,7 @@ where
     }
 
     /// Applies an operation to the CRDT, verifying the signature and checking to make sure it hasn't already been applied
-    fn apply(mut self, op: Operation<T::Description>) -> Self {
+    pub fn apply(mut self, op: Operation<T::Description>) -> Self {
         let user_pub_key = op.user_pub_key;
 
         // verify that the message is signed by the person who sent it
