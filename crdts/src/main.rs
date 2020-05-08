@@ -107,28 +107,32 @@ where
 {
     let operation_dir = project_basedir.join("operations");
     let mut all_operations: Vec<Operation<T::Description>> = vec![];
-    for user_entry in fs::read_dir(&operation_dir).expect(&format!(
-        "Trying to read the '{}' folder, but couldn't open it for whatever reason",
-        operation_dir.to_string_lossy()
-    )) {
-        let user_entry = user_entry.expect(&format!(
-            "ran into an error when reading an entry in the '{}' folder",
+    if operation_dir.exists() {
+        for user_entry in fs::read_dir(&operation_dir).expect(&format!(
+            "Trying to read the '{}' folder, but couldn't open it for whatever reason",
             operation_dir.to_string_lossy()
-        ));
+        )) {
+            let user_entry = user_entry.expect(&format!(
+                "ran into an error when reading an entry in the '{}' folder",
+                operation_dir.to_string_lossy()
+            ));
 
-        let path = user_entry.path();
+            let path = user_entry.path();
 
-        if path.is_dir() {
-            all_operations.extend(get_operations_in_path::<T>(&path));
-        } else {
-            panic!(
-                "I only expected directories in {}, but I came across {}, which is a file!",
-                operation_dir.to_string_lossy(),
-                path.to_string_lossy()
-            );
+            if path.is_dir() {
+                all_operations.extend(get_operations_in_path::<T>(&path));
+            } else {
+                panic!(
+                    "I only expected directories in {}, but I came across {}, which is a file!",
+                    operation_dir.to_string_lossy(),
+                    path.to_string_lossy()
+                );
+            }
         }
+        all_operations.into_iter().fold(crdt, CRDT::apply)
+    } else {
+        crdt
     }
-    all_operations.into_iter().fold(crdt, CRDT::apply)
 }
 
 fn get_operations_in_path<T>(base_path: &PathBuf) -> Vec<Operation<T::Description>>
