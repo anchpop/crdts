@@ -20,11 +20,11 @@ pub type Id = uuid::Uuid;
 #[derive(Hash, Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Operation<T> {
     pub user_pub_key: UserPubKey,
-    data: OperationSigned<T>,
+    pub data: OperationSigned<T>,
 }
 
 #[derive(Hash, Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
-struct OperationSigned<T> {
+pub struct OperationSigned<T> {
     // @todo: We also should be creating an "initial signature" which signs the CRDT's ID
     signature: Signature,
     payload: OperationCounted<T>,
@@ -61,8 +61,6 @@ impl<T: Serialize> OperationCounted<T> {
 pub struct Account {
     user_pub_key: UserPubKey,
     user_sec_key: UserSecKey,
-
-    next_counter: Counter,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
@@ -101,8 +99,9 @@ where
 {
     /// Applies an operation description to the CRDT.
     /// This is the same as creating an operation from a description with `create_operation` then applying it with `apply`
-    pub fn apply_desc(self, account: &mut Account, desc: T::Description) -> Self {
-        let (new_crdt, op) = self.create_operation(account, desc);
+    pub fn apply_desc(mut self, account: &mut Account, desc: T::Description) -> Self {
+        let counter = *self.state_vector.entry(account.user_pub_key).or_insert(0);
+        let (new_crdt, op) = self.create_operation(account, desc, counter);
         let mut new_crdt = new_crdt.apply(op.clone());
         new_crdt
             .recently_created_and_applied_operations
@@ -196,10 +195,8 @@ where
         self,
         account: &mut Account,
         desc: T::Description,
+        counter: Counter,
     ) -> (Self, Operation<T::Description>) {
-        let counter = account.next_counter;
-        account.next_counter += 1;
-
         let payload = OperationCounted {
             counter,
             time: SystemTime::now()
@@ -237,7 +234,6 @@ pub fn create_account(user_pub_key: UserPubKey, user_sec_key: UserSecKey) -> Acc
     Account {
         user_pub_key,
         user_sec_key,
-        next_counter: 0,
     }
 }
 
@@ -382,8 +378,10 @@ mod tests {
                     let mut initial = create_crdt(create_crdt_info(Nat::from(0), get_random_id()));
 
                     let mut operations = vec![];
+                    let mut counter = 0;
                     for desc in vs1 {
-                        let (new, op) = initial.create_operation(&mut account, desc);
+                        let (new, op) = initial.create_operation(&mut account, desc, counter);
+                        counter += 1;
                         initial = new;
                         operations.push(op);
                     }
@@ -420,8 +418,10 @@ mod tests {
                     let mut initial = create_crdt(create_crdt_info(Nat::from(0), get_random_id()));
 
                     let mut operations = vec![];
+                    let mut counter = 0;
                     for desc in vs1 {
-                        let (new, op) = initial.create_operation(&mut account, desc);
+                        let (new, op) = initial.create_operation(&mut account, desc, counter);
+                        counter += 1;
                         initial = new;
                         operations.push(op);
                     }
@@ -463,8 +463,10 @@ mod tests {
                     let mut initial = create_crdt(create_crdt_info(Nat::from(0), get_random_id()));
 
                     let mut operations = vec![];
+                    let mut counter = 0;
                     for desc in vs1 {
-                        let (new, op) = initial.create_operation(&mut account, desc);
+                        let (new, op) = initial.create_operation(&mut account, desc, counter);
+                        counter += 1;
                         initial = new;
                         operations.push(op);
                     }

@@ -1,5 +1,6 @@
 use base64::{CharacterSet, Config};
 use directories::ProjectDirs;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sodiumoxide::crypto::hash;
 use sodiumoxide::crypto::sign;
@@ -22,7 +23,7 @@ use replicant::{
 
 use ansi_term::Colour::Red;
 
-fn base64Config() -> Config {
+fn base_64_config() -> Config {
     Config::new(CharacterSet::UrlSafe, false)
 }
 
@@ -97,33 +98,46 @@ fn run(mut crdt: CRDT<Nat>, mut account: Account, project_basedir: &Path) {
             _ => break,
         }
     }
-    write::<Nat>(crdt.flush(), project_basedir);
+    save_operations::<Nat>(crdt.flush(), project_basedir);
 }
 
-fn write<T>(mut operations: HashMap<Counter, Operation<T::Description>>, project_basedir: &Path)
+fn restore_operations<T>(crdt: CRDT<T>, project_basedir: &Path) -> CRDT<T>
 where
+    T: Applyable + DeserializeOwned,
+    T::Description: DeserializeOwned,
+{
+    todo!()
+}
+
+fn save_operations<T>(
+    mut operations: HashMap<Counter, Operation<T::Description>>,
+    project_basedir: &Path,
+) where
     T: Applyable + Serialize,
     T::Description: Serialize,
 {
     for (counter, operation) in operations.drain() {
-        let toWriteDir = {
-            let relativeDir = format!(
+        let to_write_dir = {
+            let relative_dir = format!(
                 "operations/{}",
-                base64::encode_config(operation.user_pub_key, base64Config())
+                base64::encode_config(operation.user_pub_key, base_64_config())
             );
-            project_basedir.join(std::path::Path::new(&relativeDir))
+            project_basedir.join(std::path::Path::new(&relative_dir))
         };
-        fs::create_dir_all(&toWriteDir).expect("Failed to create directory to store operations");
-        let toWriteFilePath =
-            toWriteDir.join(std::path::Path::new(&format!("{}.pennyop", counter)));
+        fs::create_dir_all(&to_write_dir).expect("Failed to create directory to store operations");
+        let to_write_file_path =
+            to_write_dir.join(std::path::Path::new(&format!("{}.pennyop", counter)));
+        if to_write_file_path.exists() {
+            panic!("Something is messed up... I want to write to {} but it already exists. That's bad! Aborting", to_write_file_path.to_string_lossy());
+        }
         let mut file = OpenOptions::new()
             .read(false)
             .write(true)
             .create(true)
-            .open(toWriteFilePath)
+            .open(to_write_file_path)
             .unwrap();
         file.write_all(
-            &bincode::serialize(&operation).expect("somehow there was a serialization error"),
+            &bincode::serialize(&operation.data).expect("somehow there was a serialization error"),
         )
         .expect("Failed to write operation");
     }
@@ -168,7 +182,7 @@ fn get_keypair(pennyfile_dir: &PathBuf) -> DirectoryLevelUserInfo {
             )
             .as_bytes();
         let pennyfile_dir_hash = hash::hash(pennyfile_dir_bytes);
-        base64::encode_config(pennyfile_dir_hash, base64Config())
+        base64::encode_config(pennyfile_dir_hash, base_64_config())
     };
 
     let mut keys = get_all_saved_keypairs();
