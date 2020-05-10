@@ -17,7 +17,7 @@ use std::path::PathBuf;
 mod replicant;
 use replicant::{
     create_account, create_crdt, create_crdt_info, get_random_id, Account, Applyable, CRDTInfo,
-    Counter, Nat, Operation, OperationSigned, Signature, UserPubKey, UserSecKey, CRDT,
+    Counter, Nat, Operation, OperationSigned, UserPubKey, UserSecKey, CRDT,
 };
 
 use ansi_term::Colour::Red;
@@ -225,17 +225,9 @@ fn save_operations<T>(
     }
 }
 
-// This testimony is proof two different private keys are controlled by the same person.
-#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
-struct Testimony {
-    parent_pk: UserPubKey,
-    signature: Signature,
-}
-
 // This contains the information needed to create new operations on the CRDT.
 // It is NOT needed to read the operations. It should stay private.
 // Opening the same project in two different directories will result in different UserInfos.
-// But they will each have a testomony that proves they belong to the same person.
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 struct DirectoryLevelUserInfo {
     pk: UserPubKey,
