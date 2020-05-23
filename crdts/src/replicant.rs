@@ -125,10 +125,10 @@ impl fmt::Display for Counter {
 impl Counter {
     fn increment(&mut self, sig: Signature) {
         match self {
-            Counter::Initial(Id) => {
+            Counter::Initial(_) => {
                 *self = Counter::Operation(0, sig);
             }
-            Counter::Operation(count, Id) => {
+            Counter::Operation(count, _) => {
                 *self = Counter::Operation(*count + 1, sig);
             }
         }
@@ -473,14 +473,14 @@ mod tests {
     use rand::Rng;
     use rand::SeedableRng;
 
-    use pretty_assertions::{assert_eq, assert_ne};
+    use pretty_assertions::assert_eq;
     use proptest::prelude::*;
 
     use CRDT;
 
     #[test]
     fn apply_desc_for_nats() {
-        let mut account = {
+        let account = {
             let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) =
                 sign::gen_keypair();
             create_account(pk, sk)
@@ -519,7 +519,7 @@ mod tests {
                 let (initial, operations) = {
                     let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
                     let mut account = create_account(pk, sk);
-                    let mut initial = create_crdt(create_crdt_info(Nat::from(0), get_random_id()));
+                    let initial = create_crdt(create_crdt_info(Nat::from(0), get_random_id()));
 
 
                     let mut operations = vec![];
@@ -562,7 +562,7 @@ mod tests {
                 let (initial, operations) = {
                     let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
                     let mut account = create_account(pk, sk);
-                    let mut initial = create_crdt(create_crdt_info(Nat::from(0), get_random_id()));
+                    let initial = create_crdt(create_crdt_info(Nat::from(0), get_random_id()));
 
                     let mut operations = vec![];
                     let (op, counter) = initial.create_initial_operation(&mut account);
@@ -608,7 +608,7 @@ mod tests {
                 let (initial, operations) = {
                     let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) = sign::gen_keypair();
                     let mut account = create_account(pk, sk);
-                    let mut initial = create_crdt(create_crdt_info(Nat::from(0), get_random_id()));
+                    let initial = create_crdt(create_crdt_info(Nat::from(0), get_random_id()));
 
                     let mut operations = vec![];
                     let (op, counter) = initial.create_initial_operation(&mut account);
