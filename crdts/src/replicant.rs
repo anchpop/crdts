@@ -1,14 +1,16 @@
 use serde::{Deserialize, Serialize};
 use sodiumoxide::crypto::sign;
+use std::cmp::Ordering;
 use std::cmp::Ordering::*;
 use std::collections::HashMap;
+use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub type Time = Duration;
 pub type UserPubKey = sign::ed25519::PublicKey;
 pub type UserSecKey = sign::ed25519::SecretKey;
-pub type Counter = u32;
 pub type Signature = sign::ed25519::Signature;
+pub type Pun = u32;
 pub type Id = uuid::Uuid;
 
 /// The `Operation` contains all the information needed to apply an operation to a CRDT.
@@ -16,29 +18,39 @@ pub type Id = uuid::Uuid;
 /// etc.
 ///
 /// This is split into a couple different structs for ease of storage.  
-#[derive(Hash, Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Hash, Serialize, Deserialize, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Operation<T> {
     pub user_pub_key: UserPubKey,
     pub data: OperationSigned<T>,
 }
 
-#[derive(Hash, Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Hash, Serialize, Deserialize, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OperationSigned<T> {
     // @todo: We also should be creating an "initial signature" which signs the CRDT's ID
     signature: Signature,
     payload: OperationCounted<T>,
 }
 
-#[derive(Hash, Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Hash, Serialize, Deserialize, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 struct OperationCounted<T> {
     counter: Counter,
     time: Time,
     contents: OperationData<T>,
 }
 
-#[derive(Hash, Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
-struct OperationData<T> {
-    value: T,
+#[derive(Debug, Hash, Serialize, Deserialize, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+enum OperationData<T> {
+    Initial,
+    Desc(T),
+}
+
+impl<T> OperationData<T> {
+    fn is_initial(&self) -> bool {
+        match self {
+            OperationData::Initial => true,
+            OperationData::Desc(_) => false,
+        }
+    }
 }
 
 // Convenience functions for signing and verifying operations
@@ -62,10 +74,72 @@ pub struct Account {
     user_sec_key: UserSecKey,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, Eq, PartialEq, Hash)]
 pub struct CRDTInfo<T> {
     id: Id,
     initial_value: T,
+}
+
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, Eq, PartialEq, Hash, Ord)]
+pub enum Counter {
+    Initial(Id),
+    Operation(Pun, Signature),
+}
+
+impl PartialOrd for Counter {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match (self, other) {
+            (Counter::Initial(_), Counter::Operation(_, _)) => Some(Less),
+            (Counter::Operation(_, _), Counter::Initial(_)) => Some(Greater),
+            (Counter::Initial(id1), Counter::Initial(id2)) => {
+                if id1 == id2 {
+                    Some(Equal)
+                } else {
+                    None
+                }
+            }
+            (Counter::Operation(pun1, sig1), Counter::Operation(pun2, sig2)) => {
+                if pun1 == pun2 {
+                    if sig1 == sig2 {
+                        Some(Equal)
+                    } else {
+                        None
+                    }
+                } else {
+                    Some(pun1.cmp(pun2))
+                }
+            }
+        }
+    }
+}
+
+impl fmt::Display for Counter {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Counter::Initial(_) => write!(f, "Initial"),
+            Counter::Operation(count, _) => write!(f, "{}", count),
+        }
+    }
+}
+
+impl Counter {
+    fn increment(&mut self, sig: Signature) {
+        match self {
+            Counter::Initial(Id) => {
+                *self = Counter::Operation(0, sig);
+            }
+            Counter::Operation(count, Id) => {
+                *self = Counter::Operation(*count + 1, sig);
+            }
+        }
+    }
+
+    fn is_initial(&self) -> bool {
+        match self {
+            Counter::Initial(_) => true,
+            Counter::Operation(_, _) => false,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
@@ -84,7 +158,7 @@ pub struct CRDT<T: Applyable> {
         deserialize = "T::Description: Deserialize<'de>"
     ))]
     not_yet_applied_operations:
-        HashMap<UserPubKey, HashMap<Counter, OperationData<T::Description>>>,
+        HashMap<UserPubKey, HashMap<Counter, OperationSigned<T::Description>>>,
     recently_created_and_applied_operations: HashMap<Counter, Operation<T::Description>>,
     pub value: T,
 }
@@ -95,12 +169,26 @@ where
     T: Serialize,
     T::Description: Serialize,
     T::Description: Ord,
+
+    T: std::fmt::Debug,
+    T::Description: std::fmt::Debug,
 {
     /// Applies an operation description to the CRDT.
     /// This is the same as creating an operation from a description with `create_operation` then applying it with `apply`
-    pub fn apply_desc(mut self, account: &mut Account, desc: T::Description) -> Self {
-        let counter = *self.state_vector.entry(account.user_pub_key).or_insert(0);
-        let (new_crdt, op) = self.create_operation(account, desc, counter);
+    pub fn apply_desc(mut self, account: &Account, desc: T::Description) -> Self {
+        let counter = self
+            .state_vector
+            .entry(account.user_pub_key)
+            .or_insert(Counter::Initial(self.info.id))
+            .clone();
+        let (new_crdt, counter) = if counter.is_initial() {
+            let (op, new_counter) = self.create_initial_operation(account);
+            (self.apply(op), new_counter)
+        } else {
+            (self, counter)
+        };
+
+        let (op, _) = new_crdt.create_operation_from_description(account, desc, counter);
         let mut new_crdt = new_crdt.apply(op.clone());
         new_crdt
             .recently_created_and_applied_operations
@@ -121,7 +209,10 @@ where
         {
             // The state vector stores the counter of the next operation we expect from every user.
             // Let's see what counter we expect for this user.
-            let state_vector_counter = self.state_vector.entry(user_pub_key).or_insert(0);
+            let state_vector_counter = self
+                .state_vector
+                .entry(user_pub_key)
+                .or_insert(Counter::Initial(self.info.id));
 
             // Let's get the `not_yet_applied_operations` for this user.
             let not_yet_applied_operations = self
@@ -130,18 +221,18 @@ where
                 .or_default();
             // Now, we insert the operation we're currently working on.
             // This is safe to do because at this point we've already checked the signature
-            not_yet_applied_operations.insert(op.data.payload.counter, op.data.payload.contents);
+            not_yet_applied_operations.insert(op.data.payload.counter, op.data);
 
             // `not_yet_applied_operations` is a hashmap to prevent us from adding two operations
             // with the same counter. But now it would be convenient if it were a vector, so we
             // could iterate over it in order.
             let mut not_yet_applied_operations_ordered = not_yet_applied_operations
                 .drain()
-                .collect::<Vec<(Counter, OperationData<T::Description>)>>();
+                .collect::<Vec<(Counter, OperationSigned<T::Description>)>>();
             not_yet_applied_operations_ordered.sort();
 
             // Any of the operations we can't do right now, we'll store in the hashmap `operations_cant_do_yet`
-            let mut operations_cant_do_yet: HashMap<Counter, OperationData<T::Description>> =
+            let mut operations_cant_do_yet: HashMap<Counter, OperationSigned<T::Description>> =
                 HashMap::new();
 
             // As we iterate over `not_yet_applied_operations`, we are going to be applying the operations to our CRDT's
@@ -151,26 +242,35 @@ where
 
             // Finally - We iterate over all the operations we still want to do!
             for (counter, op) in not_yet_applied_operations_ordered {
-                match (counter).cmp(state_vector_counter) {
+                match (counter).partial_cmp(state_vector_counter) {
                     // If we get an operation who's counter is lower than the one in our state counter, we want to
                     // ignore it (it is a duplicate)
-                    Less => {}
+                    Some(Less) => {}
                     // If the operation's counter is greater, that means we're recieving that user's operations
                     // out of order, and need to store the operation to be applied in the future. We store this in
                     // `operations_cant_do_yet` to be merged back into `not_yet_applied_operations` later.
-                    Greater => {
+                    Some(Greater) => {
                         operations_cant_do_yet.insert(counter, op);
                     }
                     // If the operation's counter is the same, we want to apply it (and increment that user's
                     // counter in the state vector)
-                    Equal => {
-                        *state_vector_counter += 1;
-                        accumulator = accumulator.apply_without_idempotency_check(
-                            op.value,
-                            user_pub_key,
-                            *state_vector_counter,
-                        );
+                    Some(Equal) => {
+                        state_vector_counter.increment(op.signature);
+                        match op.payload.contents {
+                            OperationData::Initial => {}
+                            OperationData::Desc(desc) => {
+                                accumulator = accumulator.apply_without_idempotency_check(
+                                    desc,
+                                    user_pub_key,
+                                    *state_vector_counter,
+                                );
+                            }
+                        };
                     }
+                    None => panic!(
+                        "Wasn't able to compare {:?} and {:?}",
+                        counter, state_vector_counter
+                    ),
                 }
             }
             // Now we set `not_yet_applied_operations` to the `operations_cant_do_yet` list we've been building
@@ -189,19 +289,41 @@ where
         }
     }
 
+    fn create_initial_operation(&self, account: &Account) -> (Operation<T::Description>, Counter) {
+        let id = self.info.id;
+        self.create_operation(account, OperationData::Initial, Counter::Initial(id))
+    }
+
     /// Takes a description and creates an operation
-    fn create_operation(
-        self,
-        account: &mut Account,
+    fn create_operation_from_description(
+        &self,
+        account: &Account,
         desc: T::Description,
         counter: Counter,
-    ) -> (Self, Operation<T::Description>) {
+    ) -> (Operation<T::Description>, Counter) {
+        self.create_operation(account, OperationData::Desc(desc), counter)
+    }
+
+    /// Takes a description and creates an operation
+    fn create_operation(
+        &self,
+        account: &Account,
+        op_data: OperationData<T::Description>,
+        mut counter: Counter,
+    ) -> (Operation<T::Description>, Counter) {
+        assert!(
+            op_data.is_initial() == counter.is_initial(),
+            "Trying to create an operation with the data {:?} but the counter {:?}",
+            op_data,
+            counter
+        );
+
         let payload = OperationCounted {
             counter,
             time: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .expect("Time went backwards"),
-            contents: OperationData { value: desc },
+            contents: op_data,
         };
 
         let op = Operation {
@@ -211,7 +333,10 @@ where
                 payload,
             },
         };
-        (self, op)
+
+        counter.increment(op.data.signature);
+
+        (op, counter)
     }
 
     pub fn flush(&mut self) -> HashMap<Counter, Operation<T::Description>> {
@@ -296,7 +421,7 @@ pub trait Applyable: Clone {
 
 /// Nat is a very simple CRDT. It is just a number that can only go up. If I increment it and you increment it,
 /// when we merge the result will have been incremented twice.
-#[derive(Hash, Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Nat {
     pub value: u32,
 }
@@ -350,6 +475,20 @@ mod tests {
     use CRDT;
 
     #[test]
+    fn apply_desc_for_nats() {
+        let mut account = {
+            let (pk, sk): (sign::ed25519::PublicKey, sign::ed25519::SecretKey) =
+                sign::gen_keypair();
+            create_account(pk, sk)
+        };
+        let initial = create_crdt(create_crdt_info(Nat::from(0), get_random_id()));
+
+        let new = initial.apply_desc(&account, 3);
+
+        assert_eq!(new.value.value, 3);
+    }
+
+    #[test]
     fn basic_nat_test() {
         let vs1 = vec![1, 2, 3, 4, 5];
 
@@ -368,6 +507,8 @@ mod tests {
     }
 
     proptest! {
+
+
         #[test]
         fn order_insensitive(vs1 in any::<Vec<u32>>()) {
             if vs1.len() > 0 {
@@ -376,13 +517,15 @@ mod tests {
                     let mut account = create_account(pk, sk);
                     let mut initial = create_crdt(create_crdt_info(Nat::from(0), get_random_id()));
 
+
                     let mut operations = vec![];
-                    let mut counter = 0;
+                    let (op, counter) = initial.create_initial_operation(&mut account);
+                    operations.push(op);
+                    let mut counter = counter;
                     for desc in vs1 {
-                        let (new, op) = initial.create_operation(&mut account, desc, counter);
-                        counter += 1;
-                        initial = new;
+                        let (op, new_counter) = initial.create_operation_from_description(&mut account, desc, counter);
                         operations.push(op);
+                        counter = new_counter;
                     }
                     (initial, operations)
                 };
@@ -407,6 +550,7 @@ mod tests {
             }
         }
 
+
         #[test]
         fn idempotent(vs1 in any::<Vec<u32>>()) {
 
@@ -417,12 +561,13 @@ mod tests {
                     let mut initial = create_crdt(create_crdt_info(Nat::from(0), get_random_id()));
 
                     let mut operations = vec![];
-                    let mut counter = 0;
+                    let (op, counter) = initial.create_initial_operation(&mut account);
+                    operations.push(op);
+                    let mut counter = counter;
                     for desc in vs1 {
-                        let (new, op) = initial.create_operation(&mut account, desc, counter);
-                        counter += 1;
-                        initial = new;
+                        let (op, new_counter) = initial.create_operation_from_description(&mut account, desc, counter);
                         operations.push(op);
+                        counter = new_counter;
                     }
                     (initial, operations)
                 };
@@ -462,12 +607,13 @@ mod tests {
                     let mut initial = create_crdt(create_crdt_info(Nat::from(0), get_random_id()));
 
                     let mut operations = vec![];
-                    let mut counter = 0;
+                    let (op, counter) = initial.create_initial_operation(&mut account);
+                    operations.push(op);
+                    let mut counter = counter;
                     for desc in vs1 {
-                        let (new, op) = initial.create_operation(&mut account, desc, counter);
-                        counter += 1;
-                        initial = new;
+                        let (op, new_counter) = initial.create_operation_from_description(&mut account, desc, counter);
                         operations.push(op);
+                        counter = new_counter;
                     }
                     (initial, operations)
                 };
@@ -498,5 +644,6 @@ mod tests {
                 prop_assert_eq!(&try1, &try2);
             }
         }
+
     }
 }

@@ -104,6 +104,9 @@ fn restore_operations<T>(crdt: CRDT<T>, project_basedir: &Path) -> CRDT<T>
 where
     T: Applyable + Serialize + DeserializeOwned,
     T::Description: Serialize + DeserializeOwned + Ord,
+
+    T: std::fmt::Debug,
+    T::Description: std::fmt::Debug,
 {
     let operation_dir = project_basedir.join("operations");
     let mut all_operations: Vec<Operation<T::Description>> = vec![];
@@ -273,7 +276,6 @@ fn get_keypair(pennyfile_dir: &PathBuf) -> DirectoryLevelUserInfo {
 }
 
 fn get_all_saved_keypairs() -> SavedKeys {
-    // @todo: generate different keypairs for different directories
     if let Some(proj_dirs) = ProjectDirs::from("com", "PennySoftware", "Replicant") {
         let config_dir = proj_dirs.config_dir();
         println!("Config directory is {:?}", &config_dir);
@@ -308,7 +310,6 @@ fn get_all_saved_keypairs() -> SavedKeys {
 }
 
 fn set_all_saved_keypairs(keys: &SavedKeys) {
-    // @todo: generate different keypairs for different directories
     if let Some(proj_dirs) = ProjectDirs::from("com", "PennySoftware", "Replicant") {
         let config_dir = proj_dirs.config_dir();
         println!("Config directory is {:?}", &config_dir);
