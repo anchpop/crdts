@@ -26,7 +26,6 @@ pub struct Operation<T> {
 
 #[derive(Debug, Hash, Serialize, Deserialize, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct OperationSigned<T> {
-    // @todo: We also should be creating an "initial signature" which signs the CRDT's ID
     signature: Signature,
     payload: OperationCounted<T>,
 }
@@ -57,7 +56,7 @@ impl<T> OperationData<T> {
 impl<T: Serialize> OperationCounted<T> {
     fn sign(&self, user_secret_key: &UserSecKey) -> Signature {
         let encoded_payload =
-            bincode::serialize(self).expect("somehow there was a serialization error"); // @todo figure out why this is fallible in the first place
+            bincode::serialize(self).expect("somehow there was a serialization error");
         sign::sign_detached(&encoded_payload, user_secret_key)
     }
 
@@ -250,7 +249,7 @@ where
                     // If we get an operation who's counter is lower than the one in our state counter, we want to
                     // ignore it (it is a duplicate)
                     Some(Less) => {}
-                    // If the operation's counter is greater, that means we're recieving that user's operations
+                    // If the operation's counter is greater, that means we're receiving that user's operations
                     // out of order, and need to store the operation to be applied in the future. We store this in
                     // `operations_cant_do_yet` to be merged back into `not_yet_applied_operations` later.
                     Some(Greater) => {
@@ -272,7 +271,7 @@ where
                         };
                     }
                     None => panic!(
-                        "Wasn't able to compare {:?} and {:?}",
+                        "Wasn't able to compare {:?} and {:?}.\nIt's possible that someone has tried to rewrite history.",
                         counter, state_vector_counter
                     ),
                 }
@@ -289,7 +288,10 @@ where
                 ..self
             }
         } else {
-            todo!()
+            panic!(
+                "I couldn't verify that: {:#?}\nwas actually signed by {:?}",
+                &op, &user_pub_key
+            )
         }
     }
 
