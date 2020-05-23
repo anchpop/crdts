@@ -116,8 +116,8 @@ impl PartialOrd for Counter {
 impl fmt::Display for Counter {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Counter::Initial(_) => write!(f, "Initial"),
-            Counter::Operation(count, _) => write!(f, "{}", count),
+            Counter::Initial(_) => write!(f, "_initial"),
+            Counter::Operation(count, _) => write!(f, "{:0>6}", count),
         }
     }
 }
@@ -183,7 +183,11 @@ where
             .clone();
         let (new_crdt, counter) = if counter.is_initial() {
             let (op, new_counter) = self.create_initial_operation(account);
-            (self.apply(op), new_counter)
+            let mut new_crdt = self.apply(op.clone());
+            new_crdt
+                .recently_created_and_applied_operations
+                .insert(op.data.payload.counter, op);
+            (new_crdt, new_counter)
         } else {
             (self, counter)
         };
