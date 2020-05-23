@@ -55,14 +55,14 @@ impl<T> OperationData<T> {
 // Convenience functions for signing and verifying operations
 impl<T: Serialize> OperationCounted<T> {
     fn sign(&self, user_secret_key: &UserSecKey) -> Signature {
-        let encoded_payload =
-            bincode::serialize(self).expect("somehow there was a serialization error");
+        let encoded_payload = bincode::serialize(self)
+            .expect("Somehow there was a serialization error. This should not ever happen.");
         sign::sign_detached(&encoded_payload, user_secret_key)
     }
 
     fn verify_sig(&self, signature: &Signature, user_public_key: &UserPubKey) -> bool {
-        let encoded_payload =
-            bincode::serialize(self).expect("somehow there was a serialization error");
+        let encoded_payload = bincode::serialize(self)
+            .expect("Somehow there was a serialization error. This should not ever happen.");
         sign::verify_detached(&signature, &encoded_payload, user_public_key)
     }
 }
@@ -112,6 +112,7 @@ impl PartialOrd for Counter {
     }
 }
 
+// This is used when determining the filenames
 impl fmt::Display for Counter {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -271,7 +272,7 @@ where
                         };
                     }
                     None => panic!(
-                        "Wasn't able to compare {:?} and {:?}.\nIt's possible that someone has tried to rewrite history.",
+                        "I expected a signature like:\n{:?}\nBut I got:\n{:?}.\nIt's possible that someone has tried to rewrite history.",
                         counter, state_vector_counter
                     ),
                 }
@@ -319,7 +320,7 @@ where
     ) -> (Operation<T::Description>, Counter) {
         assert!(
             op_data.is_initial() == counter.is_initial(),
-            "Trying to create an operation with the data {:?} but the counter {:?}",
+            "Trying to create an operation with the data {:?} but the counter {:?}.",
             op_data,
             counter
         );
