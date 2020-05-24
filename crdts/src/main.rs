@@ -1,5 +1,5 @@
 use base64::{CharacterSet, Config};
-use directories::ProjectDirs;
+use directories_next::ProjectDirs;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sodiumoxide::crypto::hash;
@@ -22,6 +22,8 @@ use replicant::{
 
 use ansi_term::Colour::Red;
 
+// We're going to be serializing the operations with bincode, converting them to text with base64,
+// then writing them to disk. This is the base64 config we're going to be using.
 fn base64_config() -> Config {
     Config::new(CharacterSet::UrlSafe, false)
 }
@@ -32,54 +34,69 @@ fn main() {
 
     if args.len() >= 2 {
         let project_name: &str = &args[1];
-        let project_basedir_str = format!("{}/", project_name);
-        let project_file_str = format!("project.penny");
-        let project_basedir = std::path::Path::new(&project_basedir_str);
-        let pennyfile_dir = project_basedir.join(std::path::Path::new(&project_file_str));
-
-        match File::open(&pennyfile_dir) {
-            Ok(mut file) => {
-                println!("Looking for a project at {:?}.", pennyfile_dir);
-                let mut contents = vec![];
-                file.read_to_end(&mut contents).unwrap();
-                let project_info: CRDTInfo<Nat> = bincode::deserialize(&contents).unwrap();
-
-                let DirectoryLevelUserInfo { pk, sk, .. } = get_keypair(&pennyfile_dir);
-                let account = create_account(pk, sk);
-
-                let crdt = create_crdt(project_info);
-                let crdt = restore_operations::<Nat>(crdt, project_basedir);
-
-                println!("Testing the {} CRDT", Nat::NAME);
-                run(crdt, account, project_basedir);
-            }
-            Err(_) => {
-                print!(
-                    "Couldn't open '{}'! Do you want me to create it? ",
-                    project_name
-                );
-                io::stdout().flush().unwrap();
-                let mut contents = String::new();
-                io::stdin().read_line(&mut contents).unwrap();
-                if contents.trim() == "y" {
-                    let info: CRDTInfo<Nat> = create_crdt_info(Nat::from(0), get_random_id());
-                    let info =
-                        bincode::serialize(&info).expect("somehow there was a serialization error");
-                    let _test: CRDTInfo<Nat> = bincode::deserialize(&info).unwrap();
-                    fs::create_dir_all(project_basedir).unwrap();
-                    {
-                        let mut project_file = File::create(&pennyfile_dir).unwrap();
-                        project_file.write_all(&info).unwrap();
-                    }
-                    println!("I created a new project at {:?}.", pennyfile_dir);
-                }
-            }
-        }
+        attempt_to_open_project(project_name);
     } else {
         println!("Input the name of the project");
     }
 }
 
+// Attempt to open the project file. If it exists, try to read the project. If it doesn't,
+// ask the user if they want to create it.
+fn attempt_to_open_project(project_name: &str) {
+    let project_basedir_str = format!("{}/", project_name);
+    let project_file_str = format!("project.penny");
+    let project_basedir = std::path::Path::new(&project_basedir_str);
+    let pennyfile_dir = project_basedir.join(std::path::Path::new(&project_file_str));
+
+    match File::open(&pennyfile_dir) {
+        Ok(file) => read_project(file, project_basedir, pennyfile_dir),
+        Err(_) => create_new_project(project_name, project_basedir, pennyfile_dir),
+    }
+}
+
+// First, we read the info file from the project file, and use the restore_operations function
+// to collect all operations that have been recorded. Then we make an account and call the `run`
+// function to ask the user how they want to change it
+fn read_project(mut file: File, project_basedir: &Path, pennyfile_dir: PathBuf) {
+    println!("Looking for a project at {:?}.", pennyfile_dir);
+    let mut contents = vec![];
+    file.read_to_end(&mut contents).unwrap();
+    let project_info: CRDTInfo<Nat> = bincode::deserialize(&contents).unwrap();
+
+    let crdt = create_crdt(project_info);
+    let crdt = restore_operations::<Nat>(crdt, project_basedir);
+
+    let DirectoryLevelUserInfo { pk, sk, .. } = get_keypair(&pennyfile_dir);
+    let account = create_account(pk, sk);
+
+    println!("Testing the {} CRDT", Nat::NAME);
+    run(crdt, account, project_basedir);
+}
+
+// We ask the user if they want to create a new project, and create it if so.
+fn create_new_project(project_name: &str, project_basedir: &Path, pennyfile_dir: PathBuf) {
+    print!(
+        "Couldn't open '{}'! Do you want me to create it? ",
+        project_name
+    );
+    io::stdout().flush().unwrap();
+    let mut contents = String::new();
+    io::stdin().read_line(&mut contents).unwrap();
+    if contents.trim() == "y" {
+        let info: CRDTInfo<Nat> = create_crdt_info(Nat::from(0), get_random_id());
+        let info = bincode::serialize(&info).expect("somehow there was a serialization error");
+        let _test: CRDTInfo<Nat> = bincode::deserialize(&info).unwrap();
+        fs::create_dir_all(project_basedir).unwrap();
+        {
+            let mut project_file = File::create(&pennyfile_dir).unwrap();
+            project_file.write_all(&info).unwrap();
+        }
+        println!("I created a new project at {:?}.", pennyfile_dir);
+    }
+}
+
+// Repeatedly ask the user for a new operation. We'll apply it to the crdt. Once the user exits we'll save
+// all their operations to disk
 fn run(mut crdt: CRDT<Nat>, mut account: Account, project_basedir: &Path) {
     loop {
         println!(
@@ -100,6 +117,8 @@ fn run(mut crdt: CRDT<Nat>, mut account: Account, project_basedir: &Path) {
     save_operations::<Nat>(crdt.flush(), project_basedir);
 }
 
+// Crawl through the `operations` folder to find all the user operations folders (the folder name is the user's
+// public key). Then read and apply all the operations within.
 fn restore_operations<T>(crdt: CRDT<T>, project_basedir: &Path) -> CRDT<T>
 where
     T: Applyable + Serialize + DeserializeOwned,
@@ -138,6 +157,7 @@ where
     }
 }
 
+// Read through a user operations directory and return a vector of all the operations within.
 fn get_operations_in_path<T>(base_path: &PathBuf) -> Vec<Operation<T::Description>>
 where
     T: Applyable + DeserializeOwned,
@@ -191,6 +211,7 @@ where
         .collect()
 }
 
+// Record some operations to a user's operation folder.
 fn save_operations<T>(
     mut operations: HashMap<Counter, Operation<T::Description>>,
     project_basedir: &Path,
@@ -231,24 +252,31 @@ fn save_operations<T>(
 // This contains the information needed to create new operations on the CRDT.
 // It is NOT needed to read the operations. It should stay private.
 // Opening the same project in two different directories will result in different UserInfos.
+// This is to prevent corruption if the user duplicates the folder on their computer and works with
+// both simultaneously.
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 struct DirectoryLevelUserInfo {
     pk: UserPubKey,
     sk: UserSecKey,
 }
 
+// This is the computer level public key - currently unused. The idea is to use this
+// to sign the public key of the directory level keypairs.
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 struct ComputerLevelUserInfo {
     computer_pk: UserPubKey,
     computer_sk: UserSecKey,
 }
 
+// This is a struct we save and restore on each run, to persistently store the user's keypairs.
+// Unfortunately, it is written in plain text. I hope this isn't too big of a deal though.
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 struct SavedKeys {
     computer_level_user_info: ComputerLevelUserInfo,
     dir_level_keys: HashMap<String, DirectoryLevelUserInfo>,
 }
 
+// This takes a directory and returns a directory-level keypair. It will be unique to any directory.
 fn get_keypair(pennyfile_dir: &PathBuf) -> DirectoryLevelUserInfo {
     let pennyfile_dir_hash_string = {
         let pennyfile_dir_canonicalized = fs::canonicalize(pennyfile_dir).unwrap();
@@ -275,6 +303,7 @@ fn get_keypair(pennyfile_dir: &PathBuf) -> DirectoryLevelUserInfo {
     dir_keypair
 }
 
+// This gets all saved keypairs, including the master keys.
 fn get_all_saved_keypairs() -> SavedKeys {
     if let Some(proj_dirs) = ProjectDirs::from("com", "PennySoftware", "Replicant") {
         let config_dir = proj_dirs.config_dir();
@@ -309,6 +338,7 @@ fn get_all_saved_keypairs() -> SavedKeys {
     }
 }
 
+// This sets the saved keypairs.
 fn set_all_saved_keypairs(keys: &SavedKeys) {
     if let Some(proj_dirs) = ProjectDirs::from("com", "PennySoftware", "Replicant") {
         let config_dir = proj_dirs.config_dir();

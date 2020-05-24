@@ -271,6 +271,9 @@ where
                             }
                         };
                     }
+                    // It's possible that the counter isn't the same, greater, or lesser, because the signature is 
+                    // different. This is probably because someone is trying to rewrite history. I want to have a more
+                    // robust solution here in the future but for now I'm just going to fail.
                     None => panic!(
                         "I expected a signature like:\n{:?}\nBut I got:\n{:?}.\nIt's possible that someone has tried to rewrite history.",
                         counter, state_vector_counter
@@ -416,8 +419,8 @@ pub trait Applyable: Clone {
     /// then actually use `apply` or `apply_desc`, which call it internally.
     ///
     /// You can depend on a user's action never getting applied to this function twice.
-    /// If you do an action, then another action, they will always be applied in that order. But if I
-    /// do an action and you do an action, the order of application isn't specified.
+    /// Also, if a user does an action, then another action, they will always be applied in that order
+    /// (for all peers). But if I do an action and you do an action, the order of application isn't specified.
     fn apply_without_idempotency_check(
         self,
         desc: Self::Description,
