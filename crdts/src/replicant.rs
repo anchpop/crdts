@@ -436,6 +436,13 @@ pub struct Nat {
     pub value: u32,
 }
 
+// This is used when determining the filenames
+impl fmt::Display for Nat {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.value)
+    }
+}
+
 impl Default for Nat {
     fn default() -> Self {
         Nat { value: 0 }

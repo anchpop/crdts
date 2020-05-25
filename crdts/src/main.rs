@@ -97,12 +97,20 @@ fn create_new_project(project_name: &str, project_basedir: &Path, pennyfile_dir:
 
 // Repeatedly ask the user for a new operation. We'll apply it to the crdt. Once the user exits we'll save
 // all their operations to disk
-fn run(mut crdt: CRDT<Nat>, mut account: Account, project_basedir: &Path) {
+fn run<T: Applyable>(mut crdt: CRDT<T>, mut account: Account, project_basedir: &Path)
+where
+    T: Applyable,
+    T: Serialize,
+    T::Description: Serialize,
+    T::Description: Ord,
+    T::Description: std::str::FromStr,
+
+    T: std::fmt::Display,
+    T: std::fmt::Debug,
+    T::Description: std::fmt::Debug,
+{
     loop {
-        println!(
-            "Current value: {}",
-            Red.paint(format!("{}", crdt.value.value))
-        );
+        println!("Current value: {}", Red.paint(format!("{}", crdt.value)));
         print!("Increment: ");
         io::stdout().flush().unwrap();
         let mut increment = String::new();
@@ -114,7 +122,7 @@ fn run(mut crdt: CRDT<Nat>, mut account: Account, project_basedir: &Path) {
             _ => break,
         }
     }
-    save_operations::<Nat>(crdt.flush(), project_basedir);
+    save_operations::<T>(crdt.flush(), project_basedir);
 }
 
 // Crawl through the `operations` folder to find all the user operations folders (the folder name is the user's
