@@ -11,4 +11,4 @@ This repo doesn't include any code for syncing over a network. Replicant is comp
 # Demo
 
 <https://gfycat.com/tartoccasionalchupacabra>
-![demo](https://thumbs.gfycat.com/TartOccasionalChupacabra-mobile.mp4)
+![demo](https://thumbs.gfycat.com/TartOccasionalChupacabra-size_restricted.gif)
