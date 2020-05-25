@@ -13,4 +13,4 @@ This repo doesn't include any code for syncing over a network. Replicant is comp
 <https://gfycat.com/tartoccasionalchupacabra>
 
 
-![demo](https://thumbs.gfycat.com/TartOccasionalChupacabra-size_restricted.gif)
+![demo](https://github.com/anchpop/crdts/blob/master/demo.gif)
